@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Hyperledger Fabric Wallet (contains private keys)
+wallet/
+
+# Environment variables
+.env
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
