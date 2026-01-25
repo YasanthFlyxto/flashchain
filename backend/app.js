@@ -25,7 +25,7 @@ async function connectToFabric() {
             identity: 'admin',
             discovery: { enabled: true, asLocalhost: true }
         });
-        network = await gateway.getNetwork('supplychainchannel');
+        network = await gateway.getNetwork('mychannel');
         contract = network.getContract('basic');
         console.log('✅ Connected to Fabric network');
     } catch (error) {
@@ -50,7 +50,8 @@ app.get('/api/asset/:id', async (req, res) => {
                     success: true,
                     source: 'cache',
                     latency: `${latency}ms`,
-                    data: cached,
+                    data: cached.data,
+                    ttl: cached.ttl, // Expose TTL for validation
                     stakeholder: stakeholderType,
                     cacheMode: cacheMode // Show which mode is active
                 });
@@ -62,10 +63,13 @@ app.get('/api/asset/:id', async (req, res) => {
         const assetData = JSON.parse(result.toString());
 
         // Cache only if not disabled
+        let appliedTTL = 0;
         if (cacheMode !== 'disabled') {
             // Set cache mode before caching
             smartCache.setMode(cacheMode);
             await smartCache.cacheWithContext(cacheKey, assetData, { stakeholderType });
+            // Calculate what TTL was just used (for display purposes)
+            appliedTTL = smartCache.calculateAdaptiveTTL(assetData, stakeholderType);
         }
 
         const latency = Date.now() - startTime;
@@ -74,6 +78,7 @@ app.get('/api/asset/:id', async (req, res) => {
             source: 'blockchain',
             latency: `${latency}ms`,
             data: assetData,
+            ttl: appliedTTL,
             stakeholder: stakeholderType,
             cacheMode: cacheMode
         });
@@ -146,9 +151,10 @@ app.get('/api/stats', async (req, res) => {
 });
 
 // Reset statistics endpoint (for testing)
-app.post('/api/stats/reset', (req, res) => {
+app.post('/api/stats/reset', async (req, res) => {
     smartCache.resetStats();
-    res.json({ success: true, message: 'Statistics reset' });
+    await smartCache.flushAll();
+    res.json({ success: true, message: 'Statistics and cache reset' });
 });
 
 // Batch query endpoint - For scalability testing
@@ -170,7 +176,7 @@ app.post('/api/assets/batch', async (req, res) => {
 
                 const cached = await smartCache.get(cacheKey);
                 if (cached) {
-                    return { assetId, data: cached, source: 'cache' };
+                    return { assetId, data: cached.data, source: 'cache' };
                 }
 
                 try {
@@ -235,6 +241,9 @@ app.post('/api/cache/mode', (req, res) => {
     }
 
     cacheMode = mode;
+    smartCache.setMode(mode);
+    // CRITICAL: Flush cache when switching modes to ensure test isolation
+    smartCache.flushAll();
     console.log(`🔄 Cache mode changed to: ${mode}`);
 
     res.json({

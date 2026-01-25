@@ -148,7 +148,7 @@ class SmartCache {
 
                 const age = Math.floor((Date.now() - cacheEntry.cachedAt) / 1000);
                 console.log(`✅ CACHE HIT: ${key} (Age: ${age}s, Mode: ${cacheEntry.mode || 'unknown'})`);
-                return cacheEntry.data;
+                return cacheEntry; // Return full entry to access TTL and metadata
             }
 
             console.log(`❌ CACHE MISS: ${key}`);
