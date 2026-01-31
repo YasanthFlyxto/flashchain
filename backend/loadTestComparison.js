@@ -120,19 +120,21 @@ async function validateAdaptiveLogic() {
   await axios.post(`${BASE_URL}/api/cache/mode`, { mode: 'adaptive' });
 
   const scenarios = [
-    { id: TEST_ASSET, stakeholder: 'manufacturer', desc: 'Manufacturer (Historical)' },
-    { id: TEST_ASSET, stakeholder: 'distributor', desc: 'Distributor (Moderate)' },
-    { id: TEST_ASSET, stakeholder: 'retailer', desc: 'Retailer (Real-time)' },
-    { id: TEST_ASSET, stakeholder: 'default', desc: 'Default (General)' }
+    { id: 'asset1', stakeholder: 'manufacturer', desc: 'Manufacturer (Historical)' },
+    { id: 'asset2', stakeholder: 'distributor', desc: 'Distributor (Moderate)' },
+    { id: 'asset3', stakeholder: 'retailer', desc: 'Retailer (Real-time)' },
+    { id: 'asset4', stakeholder: 'default', desc: 'Default (General)' }
   ];
 
   const results = [];
 
+  // Clear cache first to force fresh calculations
+  await axios.post(`${BASE_URL}/api/cache/disable`);
+  await new Promise(resolve => setTimeout(resolve, 500));
+  await axios.post(`${BASE_URL}/api/cache/mode`, { mode: 'adaptive' });
+
   for (const s of scenarios) {
     try {
-      // Clear cache to force recalculation
-      await axios.post(`${BASE_URL}/api/stats/reset`);
-
       // First call to populate cache and get TTL
       const res = await axios.get(`${BASE_URL}/api/asset/${s.id}?stakeholder=${s.stakeholder}`);
       results.push({
@@ -150,6 +152,8 @@ async function validateAdaptiveLogic() {
 
   return results;
 }
+
+
 
 async function runComparison() {
   console.log('\n' + '='.repeat(70));
