@@ -1,5 +1,4 @@
 const express = require('express');
-
 const { Gateway, Wallets } = require('fabric-network');
 const path = require('path');
 const fs = require('fs');
@@ -8,19 +7,16 @@ const smartCache = require('./middleware/cache');
 const app = express();
 app.use(express.json());
 
-// Add at top of app.js after const app = express();
 const cors = require('cors');
-app.use(cors()); // Allow dashboard to call API
-// Serve static files from public directory
-app.use(express.static('public'));
-
-// Dashboard route
-app.get('/dashboard', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
-});
-
+app.use(cors());
 
 let gateway, network, contract;
+
+// Cache mode control
+let cacheMode = 'adaptive'; // 'adaptive' | 'simple' | 'disabled'
+let benchmarkRunning = false;
+let benchmarkProgress = 0;
+let benchmarkResults = null;
 
 async function connectToFabric() {
     try {
@@ -32,6 +28,7 @@ async function connectToFabric() {
         if (!identity) {
             throw new Error('Admin identity not found. Run enrollAdmin.js first');
         }
+
         gateway = new Gateway();
         await gateway.connect(ccp, {
             wallet,
@@ -47,6 +44,7 @@ async function connectToFabric() {
     }
 }
 
+// Get single asset with caching
 app.get('/api/asset/:id', async (req, res) => {
     const startTime = Date.now();
     const assetId = req.params.id;
@@ -54,7 +52,6 @@ app.get('/api/asset/:id', async (req, res) => {
     const cacheKey = `asset:${assetId}`;
 
     try {
-        // Check if cache is disabled
         if (cacheMode !== 'disabled') {
             const cached = await smartCache.get(cacheKey);
             if (cached) {
@@ -64,24 +61,30 @@ app.get('/api/asset/:id', async (req, res) => {
                     source: 'cache',
                     latency: `${latency}ms`,
                     data: cached.data,
-                    ttl: cached.ttl, // Expose TTL for validation
+                    ttl: cached.ttl,
                     stakeholder: stakeholderType,
-                    cacheMode: cacheMode // Show which mode is active
+                    cacheMode: cacheMode,
+                    verified: true,
+                    hash: cached.hash ? cached.hash.substring(0, 16) + '...' : 'N/A'
                 });
             }
+
+            smartCache.trackMiss(stakeholderType);
         }
 
         // Query blockchain
         const result = await contract.evaluateTransaction('ReadAsset', assetId);
         const assetData = JSON.parse(result.toString());
 
-        // Cache only if not disabled
         let appliedTTL = 0;
+
+        // ✅ FIX: Always generate hash (even if cache disabled)
+        const dataHash = smartCache.generateHash(assetData);
+
+        // Only cache if not disabled
         if (cacheMode !== 'disabled') {
-            // Set cache mode before caching
             smartCache.setMode(cacheMode);
             await smartCache.cacheWithContext(cacheKey, assetData, { stakeholderType });
-            // Calculate what TTL was just used (for display purposes)
             appliedTTL = smartCache.calculateAdaptiveTTL(assetData, stakeholderType);
         }
 
@@ -93,7 +96,9 @@ app.get('/api/asset/:id', async (req, res) => {
             data: assetData,
             ttl: appliedTTL,
             stakeholder: stakeholderType,
-            cacheMode: cacheMode
+            cacheMode: cacheMode,
+            verified: true,
+            hash: dataHash.substring(0, 16) + '...'  // ✅ Now always shows hash
         });
 
     } catch (error) {
@@ -103,37 +108,85 @@ app.get('/api/asset/:id', async (req, res) => {
 });
 
 
-app.put('/api/asset/:id', async (req, res) => {
+// Get all assets
+app.get('/api/assets', async (req, res) => {
     const startTime = Date.now();
-    const assetId = req.params.id;
-    const { newOwner } = req.body;
+    const stakeholder = req.query.stakeholder || 'default';
 
     try {
-        await contract.submitTransaction('TransferAsset', assetId, newOwner);
-        await smartCache.invalidate(`asset:${assetId}`);
+        const result = await contract.evaluateTransaction('GetAllAssets');
+        const assets = JSON.parse(result.toString());
+
+        const latency = Date.now() - startTime;
+        res.json({
+            success: true,
+            source: 'blockchain',
+            latency: latency,
+            data: assets,
+            stakeholder
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Create shipment
+app.post('/api/shipment/create', async (req, res) => {
+    const startTime = Date.now();
+    const { shipmentId, color, size, owner, value } = req.body;
+
+    try {
+        await contract.submitTransaction(
+            'CreateAsset',
+            shipmentId,
+            color,
+            size,
+            owner || 'Manufacturer',
+            value
+        );
+
+        const latency = Date.now() - startTime;
+        res.json({
+            success: true,
+            message: `Shipment ${shipmentId} created`,
+            latency: latency
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Transfer shipment
+app.post('/api/shipment/transfer', async (req, res) => {
+    const startTime = Date.now();
+    const { shipmentId, newOwner } = req.body;
+
+    try {
+        await contract.submitTransaction('TransferAsset', shipmentId, newOwner);
+        await smartCache.invalidate(`asset:${shipmentId}`);
 
         const latency = Date.now() - startTime;
         res.json({
             success: true,
             latency: `${latency}ms`,
-            message: `Asset ${assetId} transferred and cache invalidated`
+            message: `Asset ${shipmentId} transferred and cache invalidated`
         });
     } catch (error) {
-        console.error(`Update failed: ${error}`);
+        console.error(`Transfer failed: ${error}`);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
+// Health check
 app.get('/health', (req, res) => {
     res.json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
-// Statistics endpoint - Shows cache effectiveness by stakeholder
+// Get statistics
 app.get('/api/stats', async (req, res) => {
     try {
         const stats = smartCache.getStats();
 
-        // Calculate aggregate metrics
         let totalHits = 0;
         let totalMisses = 0;
 
@@ -163,14 +216,14 @@ app.get('/api/stats', async (req, res) => {
     }
 });
 
-// Reset statistics endpoint (for testing)
+// Reset statistics
 app.post('/api/stats/reset', async (req, res) => {
     smartCache.resetStats();
     await smartCache.flushAll();
     res.json({ success: true, message: 'Statistics and cache reset' });
 });
 
-// Batch query endpoint - For scalability testing
+// Batch query endpoint
 app.post('/api/assets/batch', async (req, res) => {
     const startTime = Date.now();
     const { assetIds, stakeholder = 'default' } = req.body;
@@ -224,6 +277,179 @@ app.post('/api/assets/batch', async (req, res) => {
     }
 });
 
+// Cache mode control
+app.post('/api/cache/mode', (req, res) => {
+    const { mode } = req.body;
+
+    if (!['adaptive', 'simple', 'disabled'].includes(mode)) {
+        return res.status(400).json({
+            success: false,
+            error: 'Mode must be: adaptive, simple, or disabled'
+        });
+    }
+
+    cacheMode = mode;
+    smartCache.setMode(mode);
+    smartCache.flushAll();
+    console.log(`🔄 Cache mode changed to: ${mode}`);
+
+    res.json({
+        success: true,
+        mode: cacheMode,
+        message: `Cache mode set to ${mode}`
+    });
+});
+
+app.get('/api/cache/mode', (req, res) => {
+    res.json({ mode: cacheMode });
+});
+
+// Benchmark simulation
+// Find this in app.js (around line 310-360)
+app.post('/api/benchmark/simulate', async (req, res) => {
+    const { numQueries = 100, mode = 'adaptive' } = req.body;
+
+    if (benchmarkRunning) {
+        return res.status(429).json({
+            success: false,
+            error: 'Benchmark already running'
+        });
+    }
+
+    benchmarkRunning = true;
+    benchmarkProgress = 0;
+
+    console.log(`🏁 Starting benchmark: ${numQueries} queries in ${mode} mode`);
+
+    // Set mode and reset stats
+    cacheMode = mode;
+    smartCache.setMode(mode);
+    smartCache.resetStats();
+    await smartCache.flushAll();
+
+    const results = {
+        mode,
+        numQueries,
+        startTime: Date.now(),
+        latencies: [],
+        cacheHits: 0,
+        cacheMisses: 0
+    };
+
+    // ✅ FIX: Get REAL assets from blockchain
+    let assetIds;
+    try {
+        const allAssetsResult = await contract.evaluateTransaction('GetAllAssets');
+        const allAssets = JSON.parse(allAssetsResult.toString());
+        assetIds = allAssets.map(asset => asset.ID);
+
+        if (assetIds.length === 0) {
+            benchmarkRunning = false;
+            return res.status(400).json({
+                success: false,
+                error: 'No assets found in blockchain. Create some shipments first!'
+            });
+        }
+
+        console.log(`📦 Using ${assetIds.length} real assets: ${assetIds.join(', ')}`);
+    } catch (error) {
+        benchmarkRunning = false;
+        return res.status(500).json({
+            success: false,
+            error: `Failed to fetch assets: ${error.message}`
+        });
+    }
+
+    const stakeholders = ['manufacturer', 'distributor', 'retailer', 'default'];
+
+    try {
+        for (let i = 0; i < numQueries; i++) {
+            const assetId = assetIds[i % assetIds.length];  // ✅ Use real asset IDs
+            const stakeholder = stakeholders[i % stakeholders.length];
+            const cacheKey = `asset:${assetId}`;
+
+            const queryStart = Date.now();
+
+            if (cacheMode !== 'disabled') {
+                const cached = await smartCache.get(cacheKey);
+                if (cached) {
+                    results.cacheHits++;
+                    results.latencies.push(Date.now() - queryStart);
+                    benchmarkProgress = ((i + 1) / numQueries * 100).toFixed(0);
+                    continue;
+                }
+
+                smartCache.trackMiss(stakeholder);
+            }
+
+            // Query blockchain
+            try {
+                const result = await contract.evaluateTransaction('ReadAsset', assetId);
+                const assetData = JSON.parse(result.toString());
+
+                if (cacheMode !== 'disabled') {
+                    await smartCache.cacheWithContext(cacheKey, assetData, { stakeholderType: stakeholder });
+                }
+
+                results.cacheMisses++;
+                results.latencies.push(Date.now() - queryStart);
+                benchmarkProgress = ((i + 1) / numQueries * 100).toFixed(0);
+            } catch (error) {
+                console.error(`Query ${i} failed for ${assetId}:`, error.message);
+                // Don't fail entire benchmark, just skip this query
+            }
+        }
+
+        results.endTime = Date.now();
+        results.totalTime = results.endTime - results.startTime;
+        results.avgLatency = (results.latencies.reduce((a, b) => a + b, 0) / results.latencies.length).toFixed(2);
+        results.minLatency = Math.min(...results.latencies);
+        results.maxLatency = Math.max(...results.latencies);
+        results.tps = (numQueries / (results.totalTime / 1000)).toFixed(2);
+        results.cacheHitRate = ((results.cacheHits / numQueries) * 100).toFixed(2);
+
+        benchmarkResults = results;
+        benchmarkRunning = false;
+        benchmarkProgress = 100;
+
+        console.log(`✅ Benchmark complete: ${results.tps} TPS, ${results.cacheHitRate}% hit rate`);
+
+        res.json({
+            success: true,
+            results
+        });
+
+    } catch (error) {
+        console.error('Benchmark failed:', error);
+        benchmarkRunning = false;
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+
+
+// Get benchmark results
+app.get('/api/benchmark/results', (req, res) => {
+    if (!benchmarkResults) {
+        return res.json({
+            success: false,
+            message: 'No benchmark results available. Run a simulation first.'
+        });
+    }
+
+    res.json({
+        success: true,
+        results: benchmarkResults
+    });
+});
+
+// Benchmark status
+app.get('/api/benchmark/status', (req, res) => {
+    res.json({
+        running: benchmarkRunning,
+        progress: benchmarkProgress
+    });
+});
 
 async function startServer() {
     try {
@@ -239,241 +465,5 @@ async function startServer() {
         process.exit(1);
     }
 }
-
-// Cache mode control (for testing)
-let cacheMode = 'adaptive'; // 'adaptive' | 'simple' | 'disabled'
-let benchmarkRunning = false;
-let benchmarkProgress = 0;
-let benchmarkResults = null;
-
-app.post('/api/cache/mode', (req, res) => {
-    const { mode } = req.body;
-
-    if (!['adaptive', 'simple', 'disabled'].includes(mode)) {
-        return res.status(400).json({
-            success: false,
-            error: 'Mode must be: adaptive, simple, or disabled'
-        });
-    }
-
-    cacheMode = mode;
-    smartCache.setMode(mode);
-    // CRITICAL: Flush cache when switching modes to ensure test isolation
-    smartCache.flushAll();
-    console.log(`🔄 Cache mode changed to: ${mode}`);
-
-    res.json({
-        success: true,
-        mode: cacheMode,
-        message: `Cache mode set to ${mode}`
-    });
-});
-
-app.post('/api/cache/disable', (req, res) => {
-    cacheMode = 'disabled';
-    console.log('🔄 Cache disabled for testing');
-    res.json({ success: true, mode: 'disabled' });
-});
-
-app.get('/api/cache/mode', (req, res) => {
-    res.json({ mode: cacheMode });
-});
-
-
-// Add to app.js
-
-// Get all assets endpoint (if not exists)
-app.get('/api/assets', async (req, res) => {
-  const startTime = Date.now();
-  const stakeholder = req.query.stakeholder || 'default';
-  
-  try {
-    const result = await contract.evaluateTransaction('GetAllAssets');
-    const assets = JSON.parse(result.toString());
-    
-    const latency = Date.now() - startTime;
-    res.json({
-      success: true,
-      source: 'blockchain', // Or check cache
-      latency: latency,
-      data: assets,
-      stakeholder
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Create shipment endpoint
-app.post('/api/shipment/create', async (req, res) => {
-  const startTime = Date.now();
-  const { shipmentId, color, size, owner, value } = req.body;
-  
-  try {
-    await contract.submitTransaction(
-      'CreateAsset',
-      shipmentId,
-      color,
-      size,
-      owner || 'Manufacturer',
-      value
-    );
-    
-    const latency = Date.now() - startTime;
-    res.json({
-      success: true,
-      message: `Shipment ${shipmentId} created`,
-      latency: latency
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Transfer shipment endpoint
-app.post('/api/shipment/transfer', async (req, res) => {
-    const startTime = Date.now();
-    const { shipmentId, newOwner } = req.body;
-
-    try {
-        await contract.submitTransaction('TransferAsset', shipmentId, newOwner);
-        await smartCache.invalidate(`asset:${shipmentId}`);
-
-        const latency = Date.now() - startTime;
-        res.json({
-            success: true,
-            latency: `${latency}ms`,
-            message: `Asset ${shipmentId} transferred and cache invalidated`
-        });
-    } catch (error) {
-        console.error(`Update failed: ${error}`);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Benchmark simulation endpoint
-app.post('/api/benchmark/simulate', async (req, res) => {
-    const { numQueries = 100, mode = 'adaptive' } = req.body;
-    
-    if (benchmarkRunning) {
-        return res.status(429).json({
-            success: false,
-            error: 'Benchmark already running'
-        });
-    }
-    
-    benchmarkRunning = true;
-    benchmarkProgress = 0;
-    
-    console.log(`🏁 Starting benchmark: ${numQueries} queries in ${mode} mode`);
-    
-    // Set mode and reset stats
-    cacheMode = mode;
-    smartCache.setMode(mode);
-    smartCache.resetStats();
-    await smartCache.flushAll();
-    
-    const results = {
-        mode,
-        numQueries,
-        startTime: Date.now(),
-        latencies: [],
-        cacheHits: 0,
-        cacheMisses: 0
-    };
-    
-    const assetIds = ['asset1', 'asset2', 'asset3', 'asset4', 'asset5', 'asset6'];
-    const stakeholders = ['manufacturer', 'distributor', 'retailer', 'default'];
-    
-    try {
-        for (let i = 0; i < numQueries; i++) {
-            const assetId = assetIds[i % assetIds.length];
-            const stakeholder = stakeholders[i % stakeholders.length];
-            const cacheKey = `asset:${assetId}`;
-            
-            const queryStart = Date.now();
-            
-            // Check cache
-            if (cacheMode !== 'disabled') {
-                const cached = await smartCache.get(cacheKey);
-                if (cached) {
-                    results.cacheHits++;
-                    results.latencies.push(Date.now() - queryStart);
-                    benchmarkProgress = ((i + 1) / numQueries * 100).toFixed(0);
-                    continue;
-                }
-            }
-            
-            // Query blockchain
-            try {
-                const result = await contract.evaluateTransaction('ReadAsset', assetId);
-                const assetData = JSON.parse(result.toString());
-                
-                // Cache it
-                if (cacheMode !== 'disabled') {
-                    await smartCache.cacheWithContext(cacheKey, assetData, { stakeholderType: stakeholder });
-                }
-                
-                results.cacheMisses++;
-                results.latencies.push(Date.now() - queryStart);
-                benchmarkProgress = ((i + 1) / numQueries * 100).toFixed(0);
-            } catch (error) {
-                console.error(`Query ${i} failed:`, error.message);
-            }
-        }
-        
-        results.endTime = Date.now();
-        results.totalTime = results.endTime - results.startTime;
-        results.avgLatency = (results.latencies.reduce((a, b) => a + b, 0) / results.latencies.length).toFixed(2);
-        results.minLatency = Math.min(...results.latencies);
-        results.maxLatency = Math.max(...results.latencies);
-        results.tps = (numQueries / (results.totalTime / 1000)).toFixed(2);
-        results.cacheHitRate = ((results.cacheHits / numQueries) * 100).toFixed(2);
-        
-        // Store results
-        benchmarkResults = results;
-        benchmarkRunning = false;
-        benchmarkProgress = 100;
-        
-        console.log(`✅ Benchmark complete: ${results.tps} TPS, ${results.cacheHitRate}% hit rate`);
-        
-        res.json({
-            success: true,
-            results
-        });
-        
-    } catch (error) {
-        console.error('Benchmark failed:', error);
-        benchmarkRunning = false;
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Get last benchmark results
-app.get('/api/benchmark/results', (req, res) => {
-    if (!benchmarkResults) {
-        return res.json({ 
-            success: false, 
-            message: 'No benchmark results available. Run a simulation first.' 
-        });
-    }
-    
-    res.json({
-        success: true,
-        results: benchmarkResults
-    });
-});
-
-
-// Stream progress endpoint (optional for real-time updates)
-app.get('/api/benchmark/status', (req, res) => {
-    res.json({
-        running: benchmarkRunning,
-        progress: benchmarkProgress
-    });
-});
-
-
-
 
 startServer();

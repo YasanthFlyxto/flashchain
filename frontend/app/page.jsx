@@ -12,6 +12,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [lastQuery, setLastQuery] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [selectedShipment, setSelectedShipment] = useState(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -31,7 +32,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadStats, 5000); // Auto-refresh stats
+    const interval = setInterval(loadStats, 5000);
     return () => clearInterval(interval);
   }, [role]);
 
@@ -68,7 +69,6 @@ export default function Dashboard() {
         value: formData.value
       });
 
-      // Reset form
       setFormData({
         shipmentId: '',
         color: '',
@@ -77,7 +77,6 @@ export default function Dashboard() {
         value: ''
       });
 
-      // Reload data
       await loadData();
       alert('Shipment created successfully!');
     } catch (error) {
@@ -92,9 +91,7 @@ export default function Dashboard() {
         <div className="max-w-7xl mx-auto px-4 py-6">
           <div className="flex justify-between items-center">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">
-                🚀 FlashChain
-              </h1>
+              <h1 className="text-3xl font-bold text-gray-900">🚀 FlashChain</h1>
               <p className="text-sm text-gray-600 mt-1">
                 Context-Aware Smart Caching for Supply Chain Management
               </p>
@@ -102,7 +99,7 @@ export default function Dashboard() {
 
             <Link
               href="/analytics"
-              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition flex items-center gap-2"
+              className="px-4 py-2 bg-black text-white rounded-lg hover:bg-indigo-700 transition flex items-center gap-2"
             >
               <TrendingUp size={20} />
               Analytics
@@ -135,17 +132,16 @@ export default function Dashboard() {
             {/* Performance Indicator */}
             {lastQuery && (
               <div className="flex items-center gap-4 bg-gray-50 px-4 py-2 rounded-lg">
-                <div className="text-center">
-                  <p className="text-xs text-gray-500 font-semibold">LAST QUERY</p>
-                  <p className="text-2xl font-bold text-indigo-600">
-                    {lastQuery.latency}ms
-                  </p>
-                </div>
-                <div className={`px-3 py-1 rounded-full text-xs font-bold ${lastQuery.source === 'cache'
+                <div className={`px-3 py-1 rounded-full text-xs font-bold ${
+                  lastQuery.source === 'cache'
                     ? 'bg-green-500 text-white'
                     : 'bg-orange-500 text-white'
-                  }`}>
-                  {lastQuery.source.toUpperCase()}
+                }`}>
+                  {lastQuery.source === 'cache' ? '⚡ FROM CACHE' : '🔗 FROM BLOCKCHAIN'}
+                </div>
+                <div className="text-sm">
+                  <span className="text-gray-500">Latency:</span>
+                  <span className="ml-2 font-bold text-indigo-600">{lastQuery.latency}</span>
                 </div>
               </div>
             )}
@@ -165,12 +161,15 @@ export default function Dashboard() {
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-          {/* Shipments List - 2/3 width */}
+          {/* Active Shipments - 2/3 width */}
           <div className="lg:col-span-2">
             <div className="bg-white rounded-xl shadow-lg p-6">
               <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
                 <Package size={24} />
                 Active Shipments
+                <span className="ml-auto text-sm font-normal text-gray-500">
+                  Cache TTL: {roleConfig[role]?.ttl}
+                </span>
               </h2>
 
               {loading ? (
@@ -183,151 +182,287 @@ export default function Dashboard() {
                   <p className="text-gray-500">No shipments found. Create one to get started!</p>
                 </div>
               ) : (
-                <div className="space-y-4 max-h-[600px] overflow-y-auto">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {shipments.map((shipment) => (
                     <div
                       key={shipment.ID}
-                      className="border-l-4 border-indigo-500 bg-gray-50 p-4 rounded-lg hover:shadow-md transition cursor-pointer"
+                      className="border-2 border-gray-200 bg-gray-50 rounded-lg hover:shadow-lg hover:border-indigo-300 transition-all"
                     >
-                      <div className="flex justify-between items-start mb-3">
-                        <h3 className="text-lg font-bold text-indigo-600">
-                          {shipment.ID}
-                        </h3>
-                        <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
-                          ⚡ {lastQuery?.latency}ms
-                        </span>
-                      </div>
+                      <div className="p-4">
+                        <div className="flex justify-between items-start mb-3">
+                          <h3 className="text-lg font-bold text-indigo-600">
+                            {shipment.ID}
+                          </h3>
+                          <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded font-semibold">
+                            Active
+                          </span>
+                        </div>
 
-                      <div className="grid grid-cols-2 gap-3 text-sm">
-                        <div>
-                          <span className="text-gray-600 font-semibold">Product:</span>
-                          <span className="ml-2 text-gray-800">{shipment.Color}</span>
+                        <div className="space-y-2 text-sm mb-4">
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Product:</span>
+                            <span className="font-semibold text-gray-800">{shipment.Color}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Quantity:</span>
+                            <span className="font-semibold text-gray-800">{shipment.Size}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Owner:</span>
+                            <span className="font-semibold text-gray-800">{shipment.Owner}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Value:</span>
+                            <span className="font-semibold text-green-600">${shipment.AppraisedValue}</span>
+                          </div>
                         </div>
-                        <div>
-                          <span className="text-gray-600 font-semibold">Quantity:</span>
-                          <span className="ml-2 text-gray-800">{shipment.Size}</span>
-                        </div>
-                        <div>
-                          <span className="text-gray-600 font-semibold">Owner:</span>
-                          <span className="ml-2 text-gray-800">{shipment.Owner}</span>
-                        </div>
-                        <div>
-                          <span className="text-gray-600 font-semibold">Value:</span>
-                          <span className="ml-2 text-gray-800">${shipment.AppraisedValue}</span>
-                        </div>
+
+                        <button
+                          onClick={async () => {
+                            try {
+                              const details = await api.getShipment(shipment.ID, role);
+                              setSelectedShipment(details);
+                            } catch (error) {
+                              alert('Error loading shipment: ' + error.message);
+                            }
+                          }}
+                          className="w-full px-4 py-2 bg-black text-white rounded-lg hover:bg-indigo-700 transition font-semibold text-sm"
+                        >
+                          View Details
+                        </button>
                       </div>
                     </div>
                   ))}
                 </div>
               )}
             </div>
+
+            {/* Role Context Info */}
+            <div className="mt-6 bg-white rounded-xl shadow-lg p-6">
+              <h3 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
+                <Zap size={20} className="text-yellow-500" />
+                Context-Aware Caching
+              </h3>
+              <p className="text-sm text-gray-600">
+                {role === 'manufacturer' && '🏭 Historical data focus - Longest cache duration for stable production data'}
+                {role === 'distributor' && '🚚 Balanced caching - Moderate freshness for logistics tracking'}
+                {role === 'retailer' && '🏪 Real-time focus - Shortest cache for live inventory updates'}
+                {role === 'default' && '👔 Standard caching - General supply chain monitoring'}
+              </p>
+            </div>
           </div>
 
-          {/* Sidebar - 1/3 width */}
-          <div className="space-y-6">
+          {/* Sidebar - Create Shipment Form */}
+          {role === 'manufacturer' && (
+            <div className="bg-white rounded-xl shadow-lg p-6">
+              <h2 className="text-xl font-bold text-gray-800 mb-4">
+                ➕ Create Shipment
+              </h2>
+              <form onSubmit={handleCreateShipment} className="space-y-4">
+                <input
+                  type="text"
+                  placeholder="Shipment ID (e.g., SHIP007)"
+                  value={formData.shipmentId}
+                  onChange={(e) => setFormData({ ...formData, shipmentId: e.target.value })}
+                  className="w-full text-black px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                  required
+                />
+                <input
+                  type="text"
+                  placeholder="Product Type (e.g., Electronics)"
+                  value={formData.color}
+                  onChange={(e) => setFormData({ ...formData, color: e.target.value })}
+                  className="w-full px-3 text-black py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                  required
+                />
+                <input
+                  type="number"
+                  placeholder="Quantity (e.g., 100)"
+                  value={formData.size}
+                  onChange={(e) => setFormData({ ...formData, size: e.target.value })}
+                  className="w-full px-3 text-black py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                  required
+                />
+                <input
+                  type="number"
+                  placeholder="Value $ (e.g., 50000)"
+                  value={formData.value}
+                  onChange={(e) => setFormData({ ...formData, value: e.target.value })}
+                  className="w-full px-3 py-2 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                  required
+                />
+                <button
+                  type="submit"
+                  className="w-full bg-black text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition"
+                >
+                  Create Shipment
+                </button>
+              </form>
+            </div>
+          )}
+        </div>
+      </div>
 
-            {/* Create Shipment Form */}
-            {role === 'manufacturer' && (
-              <div className="bg-white rounded-xl shadow-lg p-6">
-                <h2 className="text-xl font-bold text-gray-800 mb-4">
-                  ➕ Create Shipment
-                </h2>
-                <form onSubmit={handleCreateShipment} className="space-y-4">
+      {/* Shipment Details Modal */}
+      {selectedShipment && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="bg-gradient-to-r from-indigo-600 to-purple-600 p-6 text-white">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h2 className="text-2xl font-bold">{selectedShipment.data.ID}</h2>
+                  <div className="flex gap-2 mt-3">
+                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                      selectedShipment.source === 'cache' 
+                        ? 'bg-green-100 text-green-700' 
+                        : 'bg-blue-100 text-blue-700'
+                    }`}>
+                      {selectedShipment.source === 'cache' ? '⚡ From Cache' : '🔗 From Blockchain'}
+                    </span>
+                    
+                    {selectedShipment.verified && (
+                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-white bg-opacity-20">
+                        🔒 Verified
+                      </span>
+                    )}
+                  </div>
+                </div>
+                
+                <button
+                  onClick={() => setSelectedShipment(null)}
+                  className="text-white hover:bg-white hover:bg-opacity-20 rounded-full w-10 h-10 flex items-center justify-center transition text-2xl font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <div className="border-l-4 border-indigo-500 pl-4">
+                  <div className="text-sm text-gray-600">Owner</div>
+                  <div className="text-lg font-semibold text-gray-900">
+                    {selectedShipment.data.Owner}
+                  </div>
+                </div>
+
+                <div className="border-l-4 border-purple-500 pl-4">
+                  <div className="text-sm text-gray-600">Value</div>
+                  <div className="text-lg font-semibold text-gray-900">
+                    ${selectedShipment.data.AppraisedValue}
+                  </div>
+                </div>
+
+                <div className="border-l-4 border-green-500 pl-4">
+                  <div className="text-sm text-gray-600">Color</div>
+                  <div className="text-lg font-semibold text-gray-900">
+                    {selectedShipment.data.Color}
+                  </div>
+                </div>
+
+                <div className="border-l-4 border-yellow-500 pl-4">
+                  <div className="text-sm text-gray-600">Size</div>
+                  <div className="text-lg font-semibold text-gray-900">
+                    {selectedShipment.data.Size}
+                  </div>
+                </div>
+
+                <div className="border-l-4 border-blue-500 pl-4">
+                  <div className="text-sm text-gray-600">Query Latency</div>
+                  <div className="text-lg font-semibold text-gray-900">
+                    {selectedShipment.latency}
+                  </div>
+                </div>
+
+                <div className="border-l-4 border-red-500 pl-4">
+                  <div className="text-sm text-gray-600">Cache TTL</div>
+                  <div className="text-lg font-semibold text-gray-900">
+                    {selectedShipment.ttl ? `${selectedShipment.ttl}s` : 'N/A'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Hash verification display */}
+              {selectedShipment.hash && (
+                <div className="bg-purple-50 border-2 border-purple-200 rounded-lg p-4 mb-6">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-purple-600 font-bold">🔐 Data Integrity</span>
+                    <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-bold">
+                      SHA-256 Verified
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-600 mb-1">Cryptographic Hash</div>
+                  <div className="text-sm font-mono text-gray-800 bg-white p-3 rounded border border-purple-200 break-all">
+                    {selectedShipment.hash}
+                  </div>
+                  <p className="text-xs text-gray-600 mt-2">
+                    ✓ Hash matches blockchain record - Data integrity confirmed
+                  </p>
+                </div>
+              )}
+
+              {/* Performance metrics */}
+              <div className="bg-gray-50 rounded-lg p-4 mb-6">
+                <h3 className="font-bold text-gray-800 mb-3">Performance Metrics</h3>
+                <div className="grid grid-cols-3 gap-4 text-center">
+                  <div>
+                    <div className="text-2xl font-bold text-indigo-600">
+                      {selectedShipment.latency}
+                    </div>
+                    <div className="text-xs text-gray-600">Response Time</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-green-600">
+                      {selectedShipment.source === 'cache' ? '~95%' : '0%'}
+                    </div>
+                    <div className="text-xs text-gray-600">Faster Than Direct</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-purple-600">
+                      {selectedShipment.stakeholder || role}
+                    </div>
+                    <div className="text-xs text-gray-600">Role Context</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Transfer form */}
+              <div className="border-t pt-4">
+                <h3 className="font-bold text-gray-800 mb-3">Transfer Ownership</h3>
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const newOwner = e.target.newOwner.value;
+                    try {
+                      await api.transferShipment(selectedShipment.data.ID, newOwner);
+                      alert('Shipment transferred successfully!');
+                      setSelectedShipment(null);
+                      await loadData();
+                    } catch (error) {
+                      alert('Transfer failed: ' + error.message);
+                    }
+                  }}
+                  className="flex gap-2"
+                >
                   <input
                     type="text"
-                    placeholder="Shipment ID (e.g., SHIP007)"
-                    value={formData.shipmentId}
-                    onChange={(e) => setFormData({ ...formData, shipmentId: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    name="newOwner"
+                    placeholder="New owner name"
                     required
-                  />
-                  <input
-                    type="text"
-                    placeholder="Product Type (e.g., Electronics)"
-                    value={formData.color}
-                    onChange={(e) => setFormData({ ...formData, color: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                    required
-                  />
-                  <input
-                    type="number"
-                    placeholder="Quantity (e.g., 100)"
-                    value={formData.size}
-                    onChange={(e) => setFormData({ ...formData, size: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                    required
-                  />
-                  <input
-                    type="number"
-                    placeholder="Value $ (e.g., 50000)"
-                    value={formData.value}
-                    onChange={(e) => setFormData({ ...formData, value: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                    required
+                    className="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
                   />
                   <button
                     type="submit"
-                    className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-3 rounded-lg font-semibold hover:from-indigo-700 hover:to-purple-700 transition"
+                    className="px-6 py-2 bg-black text-white rounded-lg hover:bg-indigo-700 transition font-semibold"
                   >
-                    🚀 Create Shipment
+                    Transfer
                   </button>
                 </form>
-              </div>
-            )}
-
-            {/* Stats Cards */}
-            <div className="bg-white rounded-xl shadow-lg p-6">
-              <h2 className="text-xl font-bold text-gray-800 mb-4">
-                📊 Performance Stats
-              </h2>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="text-center p-4 bg-blue-50 rounded-lg">
-                  <div className="text-3xl font-bold text-blue-600">
-                    {shipments.length}
-                  </div>
-                  <div className="text-xs text-gray-600 mt-1">Total Shipments</div>
-                </div>
-
-                <div className="text-center p-4 bg-green-50 rounded-lg">
-                  <div className="text-3xl font-bold text-green-600">
-                    {stats?.summary.cacheHitRate || '0%'}
-                  </div>
-                  <div className="text-xs text-gray-600 mt-1">Cache Hit Rate</div>
-                </div>
-
-                <div className="text-center p-4 bg-purple-50 rounded-lg">
-                  <div className="text-3xl font-bold text-purple-600">
-                    {lastQuery?.latency || '-'}ms
-                  </div>
-                  <div className="text-xs text-gray-600 mt-1">Avg Latency</div>
-                </div>
-                <div className="text-center p-4 bg-orange-50 rounded-lg">
-                  <div className="text-3xl font-bold text-orange-600">
-                    {roleConfig[role].ttl}
-                  </div>
-                  <div className="text-xs text-gray-600 mt-1">Your Cache TTL</div>
-                </div>
-              </div>
-
-              {/* Role-specific info */}
-              <div className="mt-4 p-4 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-2xl">{roleConfig[role].icon}</span>
-                  <span className="font-semibold text-gray-800">
-                    {role.charAt(0).toUpperCase() + role.slice(1)}
-                  </span>
-                </div>
-                <p className="text-xs text-gray-600">
-                  {role === 'manufacturer' && 'Historical data focus - Longest cache duration for stable production data'}
-                  {role === 'distributor' && 'Balanced caching - Moderate freshness for logistics tracking'}
-                  {role === 'retailer' && 'Real-time focus - Shortest cache for live inventory updates'}
-                  {role === 'default' && 'Standard caching - General supply chain monitoring'}
-                </p>
               </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

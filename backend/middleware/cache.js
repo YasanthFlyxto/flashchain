@@ -1,3 +1,4 @@
+// middleware/cache.js
 const redis = require('redis');
 const crypto = require('crypto');
 
@@ -5,7 +6,7 @@ class SmartCache {
     constructor() {
         this.client = null;
         this.isReady = false;
-        this.mode = 'adaptive'; // default mode: 'adaptive' | 'simple' | 'disabled'
+        this.mode = 'adaptive';
         this.stats = {
             manufacturer: { hits: 0, misses: 0, totalTTL: 0 },
             distributor: { hits: 0, misses: 0, totalTTL: 0 },
@@ -16,7 +17,6 @@ class SmartCache {
 
     /**
      * Set caching mode for benchmarking
-     * @param {string} mode - 'adaptive', 'simple', or 'disabled'
      */
     setMode(mode) {
         this.mode = mode;
@@ -30,55 +30,53 @@ class SmartCache {
         return this.mode;
     }
 
+    /**
+     * Connect to Redis
+     */
     async connect() {
         this.client = redis.createClient({
             socket: { host: 'localhost', port: 6379 }
         });
+
         this.client.on('error', (err) => console.error('❌ Redis Error:', err));
         this.client.on('ready', () => {
             console.log('✅ Redis cache connected');
             this.isReady = true;
         });
+
         await this.client.connect();
     }
 
     /**
      * Calculate adaptive TTL based on supply chain context
-     * This is the NOVELTY: Context-aware intelligent caching
+     * NOVELTY: Context-aware intelligent caching
      */
     calculateAdaptiveTTL(assetData, stakeholderType) {
-        // SIMPLE MODE: Fixed TTL for everyone
         if (this.mode === 'simple') {
-            return 600; // 10 minutes fixed
+            return 600;
         }
 
-        // ADAPTIVE MODE: Original logic
         const baseTTLMap = {
-            'manufacturer': 3600,  // 1 hour - historical data focus
-            'distributor': 1800,   // 30 min - moderate freshness
-            'retailer': 900,       // 15 min - real-time needs
-            'default': 600         // 10 min - general purpose
+            'manufacturer': 3600,
+            'distributor': 1800,
+            'retailer': 900,
+            'default': 600
         };
 
         let ttl = baseTTLMap[stakeholderType] || baseTTLMap.default;
 
-        // ADAPTIVE LOGIC: Adjust based on asset state
         const owner = assetData.Owner?.toLowerCase() || '';
 
-        // If asset is in transit or active state, reduce TTL (needs fresher data)
         if (owner.includes('transit') || owner.includes('shipping') || owner.includes('customs')) {
-            ttl = Math.floor(ttl * 0.5); // 50% shorter cache for moving items
+            ttl = Math.floor(ttl * 0.5);
             console.log(`🔄 Adaptive TTL: Asset in transit, reduced to ${ttl}s`);
-        }
-        // If asset is delivered/completed, increase TTL (stable data)
-        else if (owner.includes('delivered') || owner.includes('warehouse') || owner.includes('completed')) {
-            ttl = Math.floor(ttl * 1.5); // 50% longer cache for stable items
+        } else if (owner.includes('delivered') || owner.includes('warehouse') || owner.includes('completed')) {
+            ttl = Math.floor(ttl * 1.5);
             console.log(`📦 Adaptive TTL: Asset stable, extended to ${ttl}s`);
         }
 
-        // If asset value is high, slightly reduce TTL (more monitoring)
         if (assetData.AppraisedValue && assetData.AppraisedValue > 500) {
-            ttl = Math.floor(ttl * 0.9); // 10% shorter for high-value items
+            ttl = Math.floor(ttl * 0.9);
             console.log(`💎 Adaptive TTL: High-value asset, reduced to ${ttl}s`);
         }
 
@@ -87,7 +85,7 @@ class SmartCache {
 
     /**
      * Generate cryptographic hash for data integrity verification
-     * This addresses: Security-speed balance in your research
+     * Addresses: Security-speed balance
      */
     generateHash(data) {
         return crypto.createHash('sha256')
@@ -95,25 +93,23 @@ class SmartCache {
             .digest('hex');
     }
 
+    /**
+     * Cache data with context-aware TTL
+     */
     async cacheWithContext(key, data, context = {}) {
         if (!this.isReady) return;
 
         const { stakeholderType = 'default' } = context;
-
-        // Calculate adaptive TTL (NOVELTY FEATURE)
         const ttl = this.calculateAdaptiveTTL(data, stakeholderType);
-
-        // Generate integrity hash
         const dataHash = this.generateHash(data);
 
-        // Store data with metadata
         const cacheEntry = {
             data: data,
             hash: dataHash,
             stakeholderType: stakeholderType,
             cachedAt: Date.now(),
             ttl: ttl,
-            mode: this.mode // Track which mode was used
+            mode: this.mode
         };
 
         try {
@@ -124,23 +120,33 @@ class SmartCache {
         }
     }
 
+    /**
+     * Get cached data with integrity verification
+     */
     async get(key) {
         if (!this.isReady) return null;
 
         try {
             const cached = await this.client.get(key);
+
             if (cached) {
                 const cacheEntry = JSON.parse(cached);
 
                 // Verify data integrity
                 const currentHash = this.generateHash(cacheEntry.data);
                 if (currentHash !== cacheEntry.hash) {
-                    console.log(`⚠️  HASH MISMATCH: ${key} - Cache corrupted, invalidating`);
+                    console.log(`⚠️ HASH MISMATCH: ${key} - Cache corrupted, invalidating`);
                     await this.invalidate(key);
+
+                    // Track as miss when hash fails
+                    const type = cacheEntry.stakeholderType || 'default';
+                    if (this.stats[type]) {
+                        this.stats[type].misses++;
+                    }
                     return null;
                 }
 
-                // Update stats
+                // Track hit
                 const type = cacheEntry.stakeholderType || 'default';
                 if (this.stats[type]) {
                     this.stats[type].hits++;
@@ -148,35 +154,53 @@ class SmartCache {
 
                 const age = Math.floor((Date.now() - cacheEntry.cachedAt) / 1000);
                 console.log(`✅ CACHE HIT: ${key} (Age: ${age}s, Mode: ${cacheEntry.mode || 'unknown'})`);
-                return cacheEntry; // Return full entry to access TTL and metadata
+                return cacheEntry;
             }
 
+            // Cache miss - no data found
             console.log(`❌ CACHE MISS: ${key}`);
             return null;
+
         } catch (error) {
             console.error('Cache read error:', error);
             return null;
         }
     }
 
+    /**
+     * Track cache miss for statistics
+     * Called from app.js when cache returns null
+     */
+    trackMiss(stakeholderType = 'default') {
+        if (this.stats[stakeholderType]) {
+            this.stats[stakeholderType].misses++;
+            console.log(`📊 Tracked MISS for: ${stakeholderType}`);
+        }
+    }
+
+    /**
+     * Invalidate cache entry
+     */
     async invalidate(key) {
         if (!this.isReady) return;
+
         try {
             await this.client.del(key);
-            console.log(`🗑️  INVALIDATED: ${key}`);
+            console.log(`🗑️ INVALIDATED: ${key}`);
         } catch (error) {
             console.error('Cache invalidation error:', error);
         }
     }
 
     /**
-     * Flush all cache entries (for testing)
+     * Flush all cache entries
      */
     async flushAll() {
         if (!this.isReady) return;
+
         try {
             await this.client.flushAll();
-            console.log('🗑️  ALL CACHE FLUSHED');
+            console.log('🗑️ ALL CACHE FLUSHED');
         } catch (error) {
             console.error('Cache flush error:', error);
         }
@@ -184,14 +208,13 @@ class SmartCache {
 
     /**
      * Get caching statistics by stakeholder type
-     * For evaluation and thesis evidence
      */
     getStats() {
         return this.stats;
     }
 
     /**
-     * Reset statistics (for testing)
+     * Reset statistics
      */
     resetStats() {
         Object.keys(this.stats).forEach(key => {
@@ -228,5 +251,4 @@ class SmartCache {
     }
 }
 
-// Export singleton instance
 module.exports = new SmartCache();
