@@ -8,10 +8,10 @@ class SmartCache {
         this.isReady = false;
         this.mode = 'adaptive';
         this.stats = {
-            manufacturer: { hits: 0, misses: 0, totalTTL: 0 },
-            distributor: { hits: 0, misses: 0, totalTTL: 0 },
-            retailer: { hits: 0, misses: 0, totalTTL: 0 },
-            default: { hits: 0, misses: 0, totalTTL: 0 }
+            manufacturer: { hits: 0, misses: 0, totalTTL: 0, preCached: 0 },
+            distributor: { hits: 0, misses: 0, totalTTL: 0, preCached: 0 },
+            retailer: { hits: 0, misses: 0, totalTTL: 0, preCached: 0 },
+            default: { hits: 0, misses: 0, totalTTL: 0, preCached: 0 }
         };
     }
 
@@ -99,7 +99,7 @@ class SmartCache {
     async cacheWithContext(key, data, context = {}) {
         if (!this.isReady) return;
 
-        const { stakeholderType = 'default' } = context;
+        const { stakeholderType = 'default', preCached = false } = context;
         const ttl = this.calculateAdaptiveTTL(data, stakeholderType);
         const dataHash = this.generateHash(data);
 
@@ -109,12 +109,19 @@ class SmartCache {
             stakeholderType: stakeholderType,
             cachedAt: Date.now(),
             ttl: ttl,
-            mode: this.mode
+            mode: this.mode,
+            preCached: preCached
         };
 
         try {
             await this.client.setEx(key, ttl, JSON.stringify(cacheEntry));
-            console.log(`📦 CACHED: ${key} | TTL: ${ttl}s | Mode: ${this.mode} | Type: ${stakeholderType} | Hash: ${dataHash.substring(0, 8)}...`);
+            const preCacheLabel = preCached ? ' [PRE-CACHED]' : '';
+            console.log(`📦 CACHED: ${key} | TTL: ${ttl}s | Mode: ${this.mode} | Type: ${stakeholderType}${preCacheLabel} | Hash: ${dataHash.substring(0, 8)}...`);
+
+            // Track pre-caching stats
+            if (preCached && this.stats[stakeholderType]) {
+                this.stats[stakeholderType].preCached++;
+            }
         } catch (error) {
             console.error('Cache write error:', error);
         }
@@ -153,7 +160,8 @@ class SmartCache {
                 }
 
                 const age = Math.floor((Date.now() - cacheEntry.cachedAt) / 1000);
-                console.log(`✅ CACHE HIT: ${key} (Age: ${age}s, Mode: ${cacheEntry.mode || 'unknown'})`);
+                const preCacheLabel = cacheEntry.preCached ? ' [WAS PRE-CACHED]' : '';
+                console.log(`✅ CACHE HIT: ${key} (Age: ${age}s, Mode: ${cacheEntry.mode || 'unknown'}${preCacheLabel})`);
                 return cacheEntry;
             }
 
@@ -218,7 +226,7 @@ class SmartCache {
      */
     resetStats() {
         Object.keys(this.stats).forEach(key => {
-            this.stats[key] = { hits: 0, misses: 0, totalTTL: 0 };
+            this.stats[key] = { hits: 0, misses: 0, totalTTL: 0, preCached: 0 };
         });
         console.log('📊 Statistics reset');
     }
@@ -229,10 +237,12 @@ class SmartCache {
     getDetailedStats() {
         let totalHits = 0;
         let totalMisses = 0;
+        let totalPreCached = 0;
 
         Object.values(this.stats).forEach(s => {
             totalHits += s.hits;
             totalMisses += s.misses;
+            totalPreCached += s.preCached || 0;
         });
 
         const totalQueries = totalHits + totalMisses;
@@ -245,10 +255,156 @@ class SmartCache {
             totalQueries,
             totalHits,
             totalMisses,
+            totalPreCached,
             cacheHitRate: `${cacheHitRate}%`,
             byStakeholder: this.stats
         };
     }
 }
 
-module.exports = new SmartCache();
+// ========================================
+// PRE-CACHING RULES ENGINE
+// ========================================
+
+class PreCachingRulesEngine {
+
+    /**
+     * Rule 1: Checkpoint Proximity Rule
+     * Pre-cache when shipment is near a checkpoint (< 20km and ETA < 1h)
+     */
+    shouldPreCacheCheckpoint(assetData) {
+        const distanceToCheckpoint = assetData.CheckpointDistance || 9999;
+        const etaHours = this.calculateETAHours(assetData.ETA);
+        const hasCheckpoint = assetData.NextCheckpoint && assetData.NextCheckpoint !== '';
+
+        if (distanceToCheckpoint < 20 && etaHours < 1 && hasCheckpoint) {
+            console.log(`🎯 RULE 1 TRIGGERED: Checkpoint proximity - ${assetData.ID}`);
+            return {
+                trigger: true,
+                rule: 'checkpoint-proximity',
+                priority: 'HIGH',
+                stakeholders: ['customs', 'distributor', 'default'],
+                reason: `${assetData.NextCheckpoint} checkpoint in ${etaHours.toFixed(1)}h (${distanceToCheckpoint}km away)`
+            };
+        }
+        return { trigger: false };
+    }
+
+    /**
+     * Rule 2: Access Pattern Detection
+     * Pre-cache when asset accessed > 3 times in last hour by multiple orgs
+     */
+    shouldPreCacheAccessPattern(assetId, accessLog) {
+        const lastHour = Date.now() - 3600000;
+        const recentAccesses = accessLog.filter(a => a.timestamp > lastHour);
+        const uniqueOrgs = new Set(recentAccesses.map(a => a.stakeholder)).size;
+
+        if (recentAccesses.length > 3 && uniqueOrgs > 2) {
+            console.log(`🎯 RULE 2 TRIGGERED: Unusual access pattern - ${assetId}`);
+            return {
+                trigger: true,
+                rule: 'access-pattern',
+                priority: 'MEDIUM',
+                stakeholders: ['manufacturer', 'distributor', 'retailer', 'default'],
+                reason: `${recentAccesses.length} accesses by ${uniqueOrgs} different organizations in 1h (potential dispute)`
+            };
+        }
+        return { trigger: false };
+    }
+
+    /**
+     * Rule 3: High-Value Near Destination
+     * Pre-cache high-value shipments (> $50k) within 50km of destination
+     */
+    shouldPreCacheHighValue(assetData) {
+        const isHighValue = assetData.AppraisedValue > 50000;
+        const distanceToDest = assetData.DestinationDistance || 9999;
+
+        if (isHighValue && distanceToDest < 50) {
+            console.log(`🎯 RULE 3 TRIGGERED: High-value near destination - ${assetData.ID}`);
+            return {
+                trigger: true,
+                rule: 'high-value-destination',
+                priority: 'HIGH',
+                stakeholders: ['retailer', 'default'],
+                reason: `$${assetData.AppraisedValue} shipment only ${distanceToDest}km from destination (inspection imminent)`
+            };
+        }
+        return { trigger: false };
+    }
+
+    /**
+     * Rule 4: DON'T Pre-Cache (Optimization)
+     * Skip pre-caching for mid-journey shipments with low access
+     */
+    shouldNotPreCache(assetData, accessLog) {
+        const lastHour = Date.now() - 3600000;
+        const recentAccesses = accessLog.filter(a => a.timestamp > lastHour);
+        const distanceToAny = Math.min(
+            assetData.CheckpointDistance || 9999,
+            assetData.DestinationDistance || 9999
+        );
+
+        if (distanceToAny > 500 && recentAccesses.length <= 1) {
+            console.log(`❌ RULE 4: Skip pre-cache - ${assetData.ID} (mid-journey ${distanceToAny}km from any checkpoint, only ${recentAccesses.length} access)`);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Helper: Calculate ETA in hours
+     */
+    calculateETAHours(etaString) {
+        if (!etaString) return 999;
+        try {
+            const eta = new Date(etaString);
+            const now = new Date();
+            return (eta - now) / (1000 * 60 * 60); // milliseconds to hours
+        } catch (error) {
+            return 999;
+        }
+    }
+
+    /**
+     * Main Rule Evaluation
+     * Returns decision on whether to pre-cache and why
+     */
+    evaluatePreCachingRules(assetData, accessLog = []) {
+        // Rule 4: Check if should NOT pre-cache first (optimization)
+        if (this.shouldNotPreCache(assetData, accessLog)) {
+            return {
+                shouldPreCache: false,
+                reason: 'Mid-journey, low priority - conserve bandwidth',
+                rule: 'dont-precache'
+            };
+        }
+
+        // Check all trigger rules
+        const rules = [
+            this.shouldPreCacheCheckpoint(assetData),
+            this.shouldPreCacheAccessPattern(assetData.ID, accessLog),
+            this.shouldPreCacheHighValue(assetData)
+        ];
+
+        const triggeredRule = rules.find(r => r.trigger);
+
+        if (triggeredRule) {
+            return {
+                shouldPreCache: true,
+                ...triggeredRule
+            };
+        }
+
+        return {
+            shouldPreCache: false,
+            reason: 'No pre-caching rules triggered',
+            rule: 'none'
+        };
+    }
+}
+
+// Export both classes
+const smartCacheInstance = new SmartCache();
+module.exports = smartCacheInstance;
+module.exports.PreCachingRulesEngine = PreCachingRulesEngine;

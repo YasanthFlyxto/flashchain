@@ -13,7 +13,7 @@ export default function Analytics() {
   const [benchmarkProgress, setBenchmarkProgress] = useState(0);
   const [benchmarkResults, setBenchmarkResults] = useState(null);
   const [showSimulation, setShowSimulation] = useState(false);
-  
+
   const [simulationConfig, setSimulationConfig] = useState({
     numQueries: 100,
     mode: 'adaptive'
@@ -63,16 +63,16 @@ export default function Analytics() {
 
   async function runSimulation() {
     if (benchmarkRunning) return;
-    
+
     setBenchmarkRunning(true);
     setBenchmarkProgress(0);
-    
+
     try {
       const result = await api.runBenchmark(
         simulationConfig.numQueries,
         simulationConfig.mode
       );
-      
+
       if (result.success) {
         setBenchmarkResults(result.results);
         await loadStats();
@@ -152,16 +152,16 @@ export default function Analytics() {
       </header>
 
       <div className="max-w-7xl mx-auto px-6 py-8">
-        
+
         {/* Simulation Panel (Collapsible) */}
         {showSimulation && (
           <div className="mb-8 bg-white rounded-xl shadow-lg border-2 border-indigo-200 overflow-hidden animate-slideDown">
             <div className="bg-black to-purple-600 px-6 py-4">
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
-               Scalability Performance Test
+                Scalability Performance Test
               </h2>
             </div>
-            
+
             <div className="p-6">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                 <div>
@@ -170,7 +170,7 @@ export default function Analytics() {
                   </label>
                   <select
                     value={simulationConfig.numQueries}
-                    onChange={(e) => setSimulationConfig({...simulationConfig, numQueries: parseInt(e.target.value)})}
+                    onChange={(e) => setSimulationConfig({ ...simulationConfig, numQueries: parseInt(e.target.value) })}
                     disabled={benchmarkRunning}
                     className="w-full px-4 py-3 text-black rounded-lg border-2 border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 disabled:opacity-50 transition"
                   >
@@ -187,7 +187,7 @@ export default function Analytics() {
                   </label>
                   <select
                     value={simulationConfig.mode}
-                    onChange={(e) => setSimulationConfig({...simulationConfig, mode: e.target.value})}
+                    onChange={(e) => setSimulationConfig({ ...simulationConfig, mode: e.target.value })}
                     disabled={benchmarkRunning}
                     className="w-full px-4 text-black py-3 rounded-lg border-2 border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 disabled:opacity-50 transition"
                   >
@@ -226,7 +226,7 @@ export default function Analytics() {
                     <span className="text-indigo-600 font-bold">{benchmarkProgress}%</span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-                    <div 
+                    <div
                       className="bg-gradient-to-r from-indigo-500 to-purple-500 h-full transition-all duration-300"
                       style={{ width: `${benchmarkProgress}%` }}
                     />
@@ -245,7 +245,7 @@ export default function Analytics() {
                       COMPLETED
                     </span>
                   </div>
-                  
+
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                     <div className="bg-white rounded-lg p-4 text-center border border-green-200">
                       <div className="text-xs text-gray-600 font-semibold mb-1">Queries</div>
@@ -269,7 +269,7 @@ export default function Analytics() {
                     </div>
                   </div>
 
-               
+
                 </div>
               )}
             </div>
@@ -280,55 +280,32 @@ export default function Analytics() {
         {hasData ? (
           <>
             {/* Summary Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-              <div className="bg-white rounded-xl shadow-lg p-6  hover:shadow-xl transition">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-sm text-gray-600 font-semibold">Total Queries</div>
-                  {/* <Database className="text-blue-500" size={28} /> */}
+            {stats && (
+              <div className="grid grid-cols-3 gap-4 bg-gray-50 px-4 py-3 mb-8 rounded-lg">
+                <div className="text-center">
+                  <p className="text-xs text-gray-500 font-semibold">CACHE HITS</p>
+                  <p className="text-xl font-bold text-green-600">
+                    {stats.summary.cacheHits}
+                  </p>
                 </div>
-                <div className="text-4xl font-bold text-blue-600">
-                  {stats.summary.totalQueries}
+                <div className="text-center">
+                  <p className="text-xs text-gray-500 font-semibold">CACHE MISSES</p>
+                  <p className="text-xl font-bold text-red-600">
+                    {stats.summary.cacheMisses}
+                  </p>
                 </div>
-                <div className="text-xs text-gray-500 mt-2">All-time requests</div>
+                <div className="text-center">
+                  <p className="text-xs text-gray-500 font-semibold">HIT RATE</p>
+                  <p className="text-xl font-bold text-indigo-600">
+                    {stats.summary.cacheHitRate}
+                  </p>
+                </div>
               </div>
-
-              <div className="bg-white rounded-xl shadow-lg p-6  hover:shadow-xl transition">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-sm text-gray-600 font-semibold">Cache Hits</div>
-                  {/* <Zap className="text-green-500" size={28} /> */}
-                </div>
-                <div className="text-4xl font-bold text-green-600">
-                  {stats.summary.cacheHits}
-                </div>
-                <div className="text-xs text-gray-500 mt-2">Served from cache</div>
-              </div>
-
-              <div className="bg-white rounded-xl shadow-lg p-6  hover:shadow-xl transition">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-sm text-gray-600 font-semibold">Cache Misses</div>
-                  {/* <TrendingUp className="text-red-500" size={28} /> */}
-                </div>
-                <div className="text-4xl font-bold text-red-600">
-                  {stats.summary.cacheMisses}
-                </div>
-                <div className="text-xs text-gray-500 mt-2">Blockchain queries</div>
-              </div>
-
-              <div className="bg-white rounded-xl shadow-lg p-6  hover:shadow-xl transition">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-sm text-gray-600 font-semibold">Hit Rate</div>
-                  {/* <Activity className="text-purple-500" size={28} /> */}
-                </div>
-                <div className="text-4xl font-bold text-purple-600">
-                  {stats.summary.cacheHitRate}
-                </div>
-                <div className="text-xs text-gray-500 mt-2">Cache efficiency</div>
-              </div>
-            </div>
+            )}
 
             {/* Charts Row */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              
+
               {/* Pie Chart */}
               <div className="bg-white rounded-xl shadow-lg p-6 hover:shadow-xl transition">
                 <div className="flex items-center justify-between mb-6">
@@ -359,7 +336,7 @@ export default function Analytics() {
                   </PieChart>
                 </ResponsiveContainer>
                 <p className="text-center text-sm text-gray-600 mt-4">
-                  {parseFloat(stats.summary.cacheHitRate) > 80 
+                  {parseFloat(stats.summary.cacheHitRate) > 80
                     ? '🎯 Excellent cache performance'
                     : '⚠️ Consider optimization'
                   }
@@ -381,9 +358,9 @@ export default function Analytics() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                     <XAxis dataKey="name" stroke="#666" />
                     <YAxis stroke="#666" />
-                    <Tooltip 
-                      contentStyle={{ 
-                        backgroundColor: '#fff', 
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#fff',
                         border: '2px solid #667eea',
                         borderRadius: '8px'
                       }}
@@ -399,41 +376,7 @@ export default function Analytics() {
               </div>
             </div>
 
-            {/* Insights Card */}
-            <div className="mt-8 bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl shadow-lg p-6 text-white">
-              <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-                <Zap size={24} />
-                Key Performance Insights
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-white/10 backdrop-blur-sm rounded-lg p-4">
-                  <div className="font-semibold mb-2">Cache Efficiency</div>
-                  <div className="text-sm opacity-90">
-                    {parseFloat(stats.summary.cacheHitRate) > 90 
-                      ? '🌟 Outstanding (>90%)'
-                      : parseFloat(stats.summary.cacheHitRate) > 80
-                      ? '✅ Excellent (>80%)'
-                      : '📊 Good performance'
-                    }
-                  </div>
-                </div>
-                <div className="bg-white/10 backdrop-blur-sm rounded-lg p-4">
-                  <div className="font-semibold mb-2">Scalability Status</div>
-                  <div className="text-sm opacity-90">
-                    {benchmarkResults 
-                      ? `✅ ${benchmarkResults.tps} TPS achieved`
-                      : '📊 Run simulation to test'
-                    }
-                  </div>
-                </div>
-                <div className="bg-white/10 backdrop-blur-sm rounded-lg p-4">
-                  <div className="font-semibold mb-2">Active Stakeholders</div>
-                  <div className="text-sm opacity-90">
-                    🔄 {Object.keys(stats.byStakeholder).length} types monitored
-                  </div>
-                </div>
-              </div>
-            </div>
+
           </>
         ) : (
           /* Empty State */
@@ -447,15 +390,15 @@ export default function Analytics() {
               <button
                 onClick={() => {
                   setShowSimulation(true);
-                  setSimulationConfig({numQueries: 100, mode: 'adaptive'});
+                  setSimulationConfig({ numQueries: 100, mode: 'adaptive' });
                 }}
-                className="px-8 py-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:from-indigo-700 hover:to-purple-700 transition font-bold shadow-lg flex items-center gap-2"
+                className="px-8 py-4 bg-black text-white rounded-lg hover:bg-gray-600 transition font-bold shadow-lg flex items-center gap-2"
               >
                 <Play size={20} />
                 Run Quick Test
               </button>
-              <Link 
-                href="/" 
+              <Link
+                href="/"
                 className="px-8 py-4 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition font-bold flex items-center gap-2"
               >
                 <ArrowLeft size={20} />
