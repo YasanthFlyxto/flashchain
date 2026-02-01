@@ -1,8 +1,9 @@
-// app.js
+// app.js - COMPLETE SYNCHRONIZED VERSION
 const express = require('express');
 const { Gateway, Wallets } = require('fabric-network');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const smartCache = require('./middleware/cache');
 const { PreCachingRulesEngine } = require('./middleware/cache');
 
@@ -14,7 +15,7 @@ app.use(cors());
 let gateway, network, contract, wallet, ccp;
 
 // Cache mode control
-let cacheMode = 'adaptive'; // 'adaptive' | 'simple' | 'disabled'
+let cacheMode = 'adaptive';
 let benchmarkRunning = false;
 let benchmarkProgress = 0;
 let benchmarkResults = null;
@@ -23,10 +24,73 @@ let benchmarkResults = null;
 const preCacheRules = new PreCachingRulesEngine();
 
 // Track access patterns for Rule 2
-const accessLog = {}; // { assetId: [{stakeholder, timestamp}] }
+const accessLog = {};
 
-// Pre-caching activity log (for dashboard display)
+// Pre-caching activity log
 let preCacheActivity = [];
+
+// Enhanced tracking for analytics
+let preCacheTracking = {
+  predictions: [],
+  accesses: [],
+  ruleStats: {
+    'Rule 1': { triggered: 0, accessed: 0, wasted: 0 },
+    'Rule 2': { triggered: 0, accessed: 0, wasted: 0 },
+    'Rule 3': { triggered: 0, accessed: 0, wasted: 0 },
+    'Rule 4': { triggered: 0, accessed: 0, wasted: 0 }
+  }
+};
+
+// ========================================
+// ✨ SHARED ENRICHMENT FUNCTION (DETERMINISTIC)
+// ========================================
+
+function enrichAssetWithLocation(asset) {
+  const ownerLower = asset.Owner.toLowerCase();
+  const isInTransit = ownerLower.includes('transit') || ownerLower.includes('shipping');
+  const isNearCustoms = ownerLower.includes('customs');
+  const isDelivered = ownerLower.includes('delivered') || ownerLower.includes('warehouse');
+  const isRetailer = ownerLower.includes('retailer');
+
+  // Use asset ID hash to generate DETERMINISTIC distance (same asset = same distance)
+  const hash = crypto.createHash('md5').update(asset.ID).digest('hex');
+  const seed = parseInt(hash.substring(0, 4), 16);
+
+  let checkpointDistance = 9999;
+  let destinationDistance = 9999;
+  let nextCheckpoint = null;
+  let eta = null;
+
+  if (isInTransit) {
+    checkpointDistance = (seed % 26) + 5; // 5-30km (deterministic)
+    destinationDistance = ((seed * 2) % 60) + 20;
+    nextCheckpoint = 'Customs-Delhi';
+    eta = new Date(Date.now() + (checkpointDistance * 3 * 60000)).toISOString();
+  } else if (isNearCustoms) {
+    checkpointDistance = (seed % 13) + 2; // 2-15km
+    destinationDistance = ((seed * 2) % 30) + 10;
+    nextCheckpoint = 'Customs-Processing';
+    eta = new Date(Date.now() + 30 * 60000).toISOString();
+  } else if (isRetailer) {
+    checkpointDistance = 9999;
+    destinationDistance = ((seed * 3) % 40) + 5;
+    nextCheckpoint = null;
+    eta = new Date(Date.now() + 60 * 60000).toISOString();
+  }
+
+  return {
+    ...asset,
+    Status: isInTransit ? 'In-Transit' :
+      isNearCustoms ? 'Customs-Processing' :
+        isDelivered ? 'Delivered' :
+          isRetailer ? 'At-Retailer' : 'Warehouse',
+    CheckpointDistance: checkpointDistance,
+    DestinationDistance: destinationDistance,
+    NextCheckpoint: nextCheckpoint,
+    ETA: eta,
+    CreatedAt: new Date(Date.now() - Math.random() * 86400000).toISOString()
+  };
+}
 
 // Connect to Hyperledger Fabric
 async function connectToFabric() {
@@ -59,7 +123,7 @@ async function connectToFabric() {
 }
 
 // ========================================
-// PRE-CACHING BACKGROUND WORKER
+// PRE-CACHING BACKGROUND WORKER (SYNCHRONIZED)
 // ========================================
 
 async function preCachingWorker() {
@@ -73,49 +137,8 @@ async function preCachingWorker() {
     const result = await contract.evaluateTransaction('GetAllAssets');
     const allAssets = JSON.parse(result.toString());
 
-    // Enrich assets with simulated location/status data
-    const enrichedAssets = allAssets.map(asset => {
-      const ownerLower = asset.Owner.toLowerCase();
-      const isInTransit = ownerLower.includes('transit') || ownerLower.includes('shipping');
-      const isNearCustoms = ownerLower.includes('customs');
-      const isDelivered = ownerLower.includes('delivered') || ownerLower.includes('warehouse');
-      const isRetailer = ownerLower.includes('retailer');
-
-      let checkpointDistance = 9999;
-      let destinationDistance = 9999;
-      let nextCheckpoint = null;
-      let eta = null;
-
-      if (isInTransit) {
-        checkpointDistance = Math.floor(Math.random() * 30) + 5;
-        destinationDistance = Math.floor(Math.random() * 80) + 20;
-        nextCheckpoint = 'Customs-Delhi';
-        eta = new Date(Date.now() + (checkpointDistance * 3 * 60000)).toISOString();
-      } else if (isNearCustoms) {
-        checkpointDistance = Math.floor(Math.random() * 15) + 2;
-        destinationDistance = Math.floor(Math.random() * 40) + 10;
-        nextCheckpoint = 'Customs-Processing';
-        eta = new Date(Date.now() + 30 * 60000).toISOString();
-      } else if (isRetailer) {
-        checkpointDistance = 9999;
-        destinationDistance = Math.floor(Math.random() * 45) + 5;
-        nextCheckpoint = null;
-        eta = new Date(Date.now() + 60 * 60000).toISOString();
-      }
-
-      return {
-        ...asset,
-        Status: isInTransit ? 'In-Transit' :
-          isNearCustoms ? 'Customs-Processing' :
-            isDelivered ? 'Delivered' :
-              isRetailer ? 'At-Retailer' : 'Warehouse',
-        CheckpointDistance: checkpointDistance,
-        DestinationDistance: destinationDistance,
-        NextCheckpoint: nextCheckpoint,
-        ETA: eta,
-        CreatedAt: new Date(Date.now() - Math.random() * 86400000).toISOString()
-      };
-    });
+    // ✅ Use shared enrichment function
+    const enrichedAssets = allAssets.map(asset => enrichAssetWithLocation(asset));
 
     // Evaluate rules on enriched assets
     for (const asset of enrichedAssets) {
@@ -124,15 +147,32 @@ async function preCachingWorker() {
 
       if (evaluation.shouldPreCache) {
         const cacheKey = `asset:${asset.ID}`;
-
-        // Use cacheWithContext with custom TTL
+        
         await smartCache.cacheWithContext(cacheKey, asset, {
           stakeholderType: 'system',
           preCached: true,
           ttl: evaluation.ttl || 1800
         });
 
-        console.log(`✅ PRE-CACHED: ${asset.ID} | Rule: ${evaluation.triggeredRule} | TTL: ${evaluation.ttl}s`);
+        console.log(`✅ PRE-CACHED: ${asset.ID} | Rule: ${evaluation.triggeredRule} | Distance: ${asset.CheckpointDistance}km | TTL: ${evaluation.ttl}s`);
+
+        // Track prediction
+        const prediction = {
+          assetId: asset.ID,
+          rule: evaluation.triggeredRule,
+          reason: evaluation.reason,
+          timestamp: Date.now(),
+          accessed: false,
+          ttl: evaluation.ttl,
+          checkpointDistance: asset.CheckpointDistance
+        };
+        
+        preCacheTracking.predictions.push(prediction);
+        
+        // Update rule stats
+        if (preCacheTracking.ruleStats[evaluation.triggeredRule]) {
+          preCacheTracking.ruleStats[evaluation.triggeredRule].triggered++;
+        }
 
         // Log activity
         preCacheActivity.unshift({
@@ -154,6 +194,10 @@ async function preCachingWorker() {
       }
     }
 
+    // Clean up old predictions
+    const oneHourAgo = Date.now() - 3600000;
+    preCacheTracking.predictions = preCacheTracking.predictions.filter(p => p.timestamp > oneHourAgo);
+
     console.log('🔮 Pre-Caching Worker: Cycle complete\n');
 
   } catch (error) {
@@ -171,7 +215,7 @@ function startPreCachingWorker() {
 // API ENDPOINTS
 // ========================================
 
-// Get single asset with caching
+// Get single asset with caching (ENHANCED TRACKING)
 app.get('/api/asset/:id', async (req, res) => {
   const startTime = Date.now();
   const assetId = req.params.id;
@@ -192,9 +236,36 @@ app.get('/api/asset/:id', async (req, res) => {
       a => a.timestamp > Date.now() - 86400000
     );
 
+    // Track this access
+    preCacheTracking.accesses.push({
+      assetId,
+      timestamp: Date.now(),
+      stakeholder: stakeholderType
+    });
+
+    let wasPreCached = false;
+    let preCacheRule = null;
+
     if (cacheMode !== 'disabled') {
       const cached = await smartCache.get(cacheKey);
       if (cached) {
+        wasPreCached = cached.preCached || false;
+        
+        // If it was pre-cached, mark the prediction as successful
+        if (wasPreCached) {
+          const prediction = preCacheTracking.predictions.find(p => p.assetId === assetId && !p.accessed);
+          if (prediction) {
+            prediction.accessed = true;
+            prediction.accessedAt = Date.now();
+            preCacheRule = prediction.rule;
+            
+            // Update rule stats
+            if (preCacheTracking.ruleStats[prediction.rule]) {
+              preCacheTracking.ruleStats[prediction.rule].accessed++;
+            }
+          }
+        }
+        
         const latency = Date.now() - startTime;
         return res.json({
           success: true,
@@ -205,7 +276,8 @@ app.get('/api/asset/:id', async (req, res) => {
           stakeholder: stakeholderType,
           cacheMode: cacheMode,
           verified: true,
-          preCached: cached.preCached || false,
+          preCached: wasPreCached,
+          preCacheRule: preCacheRule,
           hash: cached.hash ? cached.hash.substring(0, 16) + '...' : 'N/A'
         });
       }
@@ -236,6 +308,7 @@ app.get('/api/asset/:id', async (req, res) => {
       cacheMode: cacheMode,
       verified: true,
       preCached: false,
+      preCacheRule: null,
       hash: dataHash.substring(0, 16) + '...'
     });
 
@@ -382,34 +455,6 @@ app.get('/api/precache/activity', (req, res) => {
     totalPreCached: preCacheActivity.length
   });
 });
-
-// Clear everything - cache, stats, activity
-app.post('/api/system/reset', async (req, res) => {
-  try {
-    // 1. Flush all Redis cache
-    await smartCache.flushAll();
-
-    // 2. Reset statistics
-    smartCache.resetStats();
-
-    // 3. Clear pre-cache activity log
-    preCacheActivity = [];
-
-    // 4. Clear access logs
-    Object.keys(accessLog).forEach(key => delete accessLog[key]);
-
-    console.log('🧹 SYSTEM RESET: Cache flushed, stats reset, activity cleared');
-
-    res.json({
-      success: true,
-      message: 'All cache, statistics, and activity logs cleared',
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
 
 // Reset statistics
 app.post('/api/stats/reset', async (req, res) => {
@@ -637,47 +682,52 @@ app.get('/api/benchmark/status', (req, res) => {
   });
 });
 
-// Get predictions
+// ✅ SYNCHRONIZED: Get predictions using same enrichment logic
 app.get('/api/precache/predictions', async (req, res) => {
   try {
     const result = await contract.evaluateTransaction('GetAllAssets');
     const allAssets = JSON.parse(result.toString());
 
+    // ✅ Use shared enrichment function
+    const enrichedAssets = allAssets.map(asset => enrichAssetWithLocation(asset));
+
     const predictions = [];
     const now = Date.now();
 
-    for (const asset of allAssets) {
-      const ownerLower = asset.Owner.toLowerCase();
-      const isInTransit = ownerLower.includes('transit') || ownerLower.includes('shipping');
-      const isNearCustoms = ownerLower.includes('customs');
+    for (const asset of enrichedAssets) {
+      const checkpointDistance = asset.CheckpointDistance;
+      const isInTransit = asset.Status.includes('Transit');
+      const value = parseInt(asset.AppraisedValue);
 
-      if (isInTransit) {
-        const minutesUntilCheckpoint = Math.floor(Math.random() * 20) + 3;
+      // Rule 1: Checkpoint Proximity
+      if (isInTransit && checkpointDistance < 20) {
+        const minutesUntilCheckpoint = Math.floor(checkpointDistance * 3);
         predictions.push({
           assetId: asset.ID,
           event: 'Approaching Checkpoint',
           timeUntil: minutesUntilCheckpoint * 60 * 1000,
           minutesUntil: minutesUntilCheckpoint,
-          reason: `${asset.ID} will reach customs checkpoint in ${minutesUntilCheckpoint} minutes`,
+          reason: `${asset.ID} will reach checkpoint in ${minutesUntilCheckpoint} minutes (${checkpointDistance}km away)`,
           rule: 'Rule 1: Checkpoint Proximity',
-          checkpointDistance: Math.floor(Math.random() * 15) + 5,
+          checkpointDistance: checkpointDistance,
           eta: new Date(now + minutesUntilCheckpoint * 60000).toISOString(),
           assetValue: asset.AppraisedValue,
-          willTrigger: minutesUntilCheckpoint < 15,
-          priority: asset.AppraisedValue > 50000 ? 'high' : 'medium'
+          willTrigger: true,
+          priority: checkpointDistance < 10 ? 'high' : 'medium'
         });
       }
 
-      if (isNearCustoms && asset.AppraisedValue > 30000) {
-        const minutesUntilAccess = Math.floor(Math.random() * 10) + 2;
+      // Rule 3: High-Value Near Destination
+      if (value > 50000 && asset.DestinationDistance < 50) {
+        const minutesUntilAccess = Math.floor(asset.DestinationDistance * 2);
         predictions.push({
           assetId: asset.ID,
-          event: 'High-Value Customs Processing',
+          event: 'High-Value Near Destination',
           timeUntil: minutesUntilAccess * 60 * 1000,
           minutesUntil: minutesUntilAccess,
-          reason: `High-value asset likely to be accessed by customs officer in ${minutesUntilAccess} minutes`,
+          reason: `High-value asset ($${(value / 1000).toFixed(0)}k) approaching destination (${asset.DestinationDistance}km away)`,
           rule: 'Rule 3: High-Value Asset',
-          checkpointDistance: 2,
+          checkpointDistance: asset.DestinationDistance,
           assetValue: asset.AppraisedValue,
           willTrigger: true,
           priority: 'high'
@@ -689,7 +739,7 @@ app.get('/api/precache/predictions', async (req, res) => {
 
     res.json({
       success: true,
-      predictions: predictions.slice(0, 5),
+      predictions: predictions.slice(0, 8),
       timestamp: new Date().toISOString()
     });
 
@@ -706,24 +756,15 @@ app.post('/api/precache/trigger/:assetId', async (req, res) => {
     const result = await contract.evaluateTransaction('ReadAsset', assetId);
     const asset = JSON.parse(result.toString());
 
-    const ownerLower = asset.Owner.toLowerCase();
-    const isInTransit = ownerLower.includes('transit');
-
-    const enrichedAsset = {
-      ...asset,
-      CheckpointDistance: isInTransit ? 8 : 9999,
-      DestinationDistance: isInTransit ? 25 : 9999,
-      NextCheckpoint: isInTransit ? 'Customs-Delhi' : null,
-      ETA: isInTransit ? new Date(Date.now() + 1800000).toISOString() : null,
-      Status: isInTransit ? 'In-Transit' : 'Warehouse'
-    };
+    // ✅ Use shared enrichment function
+    const enrichedAsset = enrichAssetWithLocation(asset);
 
     const assetAccessLog = accessLog[assetId] || [];
     const evaluation = preCacheRules.evaluatePreCachingRules(enrichedAsset, assetAccessLog);
 
     if (evaluation.shouldPreCache) {
       const cacheKey = `asset:${assetId}`;
-
+      
       await smartCache.cacheWithContext(cacheKey, enrichedAsset, {
         stakeholderType: 'system',
         preCached: true,
@@ -770,33 +811,29 @@ app.post('/api/precache/trigger/:assetId', async (req, res) => {
   }
 });
 
-// ========================================
-// ✨ NEW: LATENCY COMPARISON ENDPOINT
-// ========================================
-
-// Compare cache vs blockchain latency for a single asset
+// Compare cache vs blockchain latency
 app.get('/api/asset/:id/compare', async (req, res) => {
   const assetId = req.params.id;
   const stakeholder = req.query.stakeholder || 'default';
-
+  
   try {
-    // 1. Query from cache (if exists)
+    // 1. Query from cache
     const cacheKey = `asset:${assetId}`;
     const cacheStart = Date.now();
     const cached = await smartCache.get(cacheKey);
     const cacheLatency = Date.now() - cacheStart;
-
-    // 2. Query from blockchain (always - for comparison)
+    
+    // 2. Query from blockchain
     const blockchainStart = Date.now();
     const result = await contract.evaluateTransaction('ReadAsset', assetId);
     const assetData = JSON.parse(result.toString());
     const blockchainLatency = Date.now() - blockchainStart;
-
+    
     // Calculate savings
     const savings = cached ? blockchainLatency - cacheLatency : 0;
     const improvement = cached ? ((savings / blockchainLatency) * 100).toFixed(1) : 0;
     const speedup = cached ? (blockchainLatency / cacheLatency).toFixed(1) : 0;
-
+    
     res.json({
       success: true,
       assetId,
@@ -823,42 +860,38 @@ app.get('/api/asset/:id/compare', async (req, res) => {
       },
       data: assetData
     });
-
+    
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// ========================================
-// ✨ NEW: PRE-CACHE EFFECTIVENESS STATS
-// ========================================
-
 // Get aggregate pre-cache effectiveness metrics
 app.get('/api/precache/effectiveness', (req, res) => {
   try {
     const stats = smartCache.getStats();
-
+    
     let preCacheHits = 0;
     let regularCacheHits = 0;
     let cacheMisses = 0;
-
+    
     Object.values(stats).forEach(s => {
       preCacheHits += s.preCached || 0;
       regularCacheHits += (s.hits - (s.preCached || 0));
       cacheMisses += s.misses;
     });
-
+    
     const totalQueries = preCacheHits + regularCacheHits + cacheMisses;
-    const preCacheRate = totalQueries > 0
-      ? ((preCacheHits / totalQueries) * 100).toFixed(1)
+    const preCacheRate = totalQueries > 0 
+      ? ((preCacheHits / totalQueries) * 100).toFixed(1) 
       : 0;
-
-    // Estimated time savings (cache ~5ms vs blockchain ~280ms)
+    
+    // Estimated time savings
     const avgCacheLatency = 5;
     const avgBlockchainLatency = 280;
     const timeSavedPreCached = preCacheHits * (avgBlockchainLatency - avgCacheLatency);
     const timeSavedRegular = regularCacheHits * (avgBlockchainLatency - avgCacheLatency);
-
+    
     res.json({
       success: true,
       effectiveness: {
@@ -876,7 +909,264 @@ app.get('/api/precache/effectiveness', (req, res) => {
       },
       byStakeholder: stats
     });
+    
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
+// ========================================
+// ANALYTICS ENDPOINTS
+// ========================================
+
+// Get pre-cache accuracy metrics
+app.get('/api/analytics/accuracy', (req, res) => {
+  try {
+    const predictions = preCacheTracking.predictions;
+    const totalPredictions = predictions.length;
+    const accessedPredictions = predictions.filter(p => p.accessed).length;
+    const wastedPredictions = predictions.filter(p => !p.accessed && (Date.now() - p.timestamp > 600000)).length;
+    
+    const accuracy = totalPredictions > 0 
+      ? ((accessedPredictions / totalPredictions) * 100).toFixed(1)
+      : 0;
+    
+    const wasteRate = totalPredictions > 0
+      ? ((wastedPredictions / totalPredictions) * 100).toFixed(1)
+      : 0;
+
+    // Calculate rule effectiveness
+    const ruleEffectiveness = {};
+    Object.entries(preCacheTracking.ruleStats).forEach(([rule, stats]) => {
+      const total = stats.triggered;
+      const successful = stats.accessed;
+      const wasted = stats.triggered - stats.accessed;
+      const effectiveness = total > 0 ? ((successful / total) * 100).toFixed(1) : 0;
+      
+      ruleEffectiveness[rule] = {
+        triggered: total,
+        accessed: successful,
+        wasted: wasted,
+        effectiveness: `${effectiveness}%`
+      };
+    });
+
+    res.json({
+      success: true,
+      accuracy: {
+        totalPredictions,
+        correctPredictions: accessedPredictions,
+        wastedPredictions,
+        accuracyRate: `${accuracy}%`,
+        wasteRate: `${wasteRate}%`
+      },
+      ruleEffectiveness,
+      recentPredictions: predictions.slice(-10).reverse()
+    });
+    
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ✅ FIXED: Scenario-based benchmark with proper boolean comparison
+app.post('/api/analytics/scenario-test', async (req, res) => {
+  const { scenario } = req.body;
+  
+  try {
+    let testAssets = [];
+    let expectedPreCache = [];
+    
+    // Define test scenarios
+    switch (scenario) {
+      case 'checkpoint_proximity':
+        testAssets = [
+          { id: 'TEST_CP001', owner: 'Customs-Transit-Approaching', value: 30000 },
+          { id: 'TEST_CP002', owner: 'Distributor-Transit-Checkpoint', value: 45000 },
+          { id: 'TEST_CP003', owner: 'Warehouse-Static', value: 25000 }
+        ];
+        expectedPreCache = ['TEST_CP001', 'TEST_CP002'];
+        break;
+        
+      case 'high_value':
+        testAssets = [
+          { id: 'TEST_HV001', owner: 'Retailer-NearDestination', value: 75000 },
+          { id: 'TEST_HV002', owner: 'Distributor-Transit', value: 90000 },
+          { id: 'TEST_HV003', owner: 'Manufacturer', value: 15000 }
+        ];
+        expectedPreCache = ['TEST_HV001', 'TEST_HV002'];
+        break;
+        
+      case 'multi_access':
+        testAssets = [
+          { id: 'TEST_MA001', owner: 'Distributor', value: 40000 }
+        ];
+        accessLog['TEST_MA001'] = [
+          { stakeholder: 'manufacturer', timestamp: Date.now() - 500000 },
+          { stakeholder: 'distributor', timestamp: Date.now() - 300000 },
+          { stakeholder: 'retailer', timestamp: Date.now() - 100000 },
+          { stakeholder: 'customs', timestamp: Date.now() - 50000 }
+        ];
+        expectedPreCache = ['TEST_MA001'];
+        break;
+        
+      default:
+        return res.status(400).json({ success: false, error: 'Unknown scenario' });
+    }
+    
+    // Create or update test assets
+    for (const asset of testAssets) {
+      try {
+        await contract.submitTransaction(
+          'CreateAsset',
+          asset.id,
+          'TestProduct',
+          '100',
+          asset.owner,
+          asset.value.toString()
+        );
+        console.log(`✅ Created test asset: ${asset.id}`);
+      } catch (error) {
+        if (error.message.includes('already exists')) {
+          console.log(`ℹ️  Test asset ${asset.id} already exists - updating`);
+          try {
+            await contract.submitTransaction(
+              'UpdateAsset',
+              asset.id,
+              'TestProduct',
+              '100',
+              asset.owner,
+              asset.value.toString()
+            );
+          } catch (updateError) {
+            console.log(`⚠️  Could not update ${asset.id}`);
+          }
+        }
+      }
+    }
+    
+    // Clear cache for test assets
+    for (const asset of testAssets) {
+      await smartCache.invalidate(`asset:${asset.id}`);
+    }
+    console.log('🧹 Cleared cache for test assets');
+    
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    // Trigger pre-cache worker
+    await preCachingWorker();
+    
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // ✅ FIXED: Check which assets were pre-cached with proper boolean comparison
+    const results = [];
+    for (const asset of testAssets) {
+      const cacheKey = `asset:${asset.id}`;
+      const cached = await smartCache.get(cacheKey);
+      
+      // ✅ Ensure wasPreCached is always a boolean
+      const wasPreCached = cached ? (cached.preCached === true) : false;
+      const expected = expectedPreCache.includes(asset.id);
+      
+      results.push({
+        assetId: asset.id,
+        expectedPreCache: expected,
+        actuallyPreCached: wasPreCached,
+        correct: expected === wasPreCached, // Now this works correctly!
+        rule: cached?.data?.preCacheRule || null
+      });
+    }
+    
+    // Measure latency
+    const latencyResults = [];
+    for (const asset of testAssets) {
+      const cacheKey = `asset:${asset.id}`;
+      
+      const cacheStart = Date.now();
+      const cached = await smartCache.get(cacheKey);
+      const cacheLatency = Date.now() - cacheStart;
+      
+      const blockchainStart = Date.now();
+      await contract.evaluateTransaction('ReadAsset', asset.id);
+      const blockchainLatency = Date.now() - blockchainStart;
+      
+      latencyResults.push({
+        assetId: asset.id,
+        cacheLatency: cached ? cacheLatency : null,
+        blockchainLatency,
+        improvement: cached ? ((blockchainLatency - cacheLatency) / blockchainLatency * 100).toFixed(1) : 0,
+        wasPreCached: cached ? (cached.preCached === true) : false
+      });
+    }
+    
+    const correctPredictions = results.filter(r => r.correct).length;
+    const accuracy = (correctPredictions / results.length * 100).toFixed(1);
+    
+    res.json({
+      success: true,
+      scenario,
+      testResults: results,
+      latencyComparison: latencyResults,
+      accuracy: `${accuracy}%`,
+      correctPredictions,
+      totalTests: results.length
+    });
+    
+  } catch (error) {
+    console.error('Scenario test error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Reset analytics tracking
+app.post('/api/analytics/reset', async (req, res) => {
+  try {
+    preCacheTracking = {
+      predictions: [],
+      accesses: [],
+      ruleStats: {
+        'Rule 1': { triggered: 0, accessed: 0, wasted: 0 },
+        'Rule 2': { triggered: 0, accessed: 0, wasted: 0 },
+        'Rule 3': { triggered: 0, accessed: 0, wasted: 0 },
+        'Rule 4': { triggered: 0, accessed: 0, wasted: 0 }
+      }
+    };
+    
+    res.json({
+      success: true,
+      message: 'Analytics tracking reset'
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Clear everything
+app.post('/api/system/reset', async (req, res) => {
+  try {
+    await smartCache.flushAll();
+    smartCache.resetStats();
+    preCacheActivity = [];
+    Object.keys(accessLog).forEach(key => delete accessLog[key]);
+    
+    preCacheTracking = {
+      predictions: [],
+      accesses: [],
+      ruleStats: {
+        'Rule 1': { triggered: 0, accessed: 0, wasted: 0 },
+        'Rule 2': { triggered: 0, accessed: 0, wasted: 0 },
+        'Rule 3': { triggered: 0, accessed: 0, wasted: 0 },
+        'Rule 4': { triggered: 0, accessed: 0, wasted: 0 }
+      }
+    };
+    
+    console.log('🧹 SYSTEM RESET: All cache and stats cleared');
+    
+    res.json({
+      success: true,
+      message: 'All cache, statistics, and activity logs cleared',
+      timestamp: new Date().toISOString()
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -924,7 +1214,6 @@ app.post('/api/simulate/event', async (req, res) => {
       );
     }
 
-    // Trigger pre-cache worker immediately
     setTimeout(() => preCachingWorker(), 500);
 
     res.json({
@@ -945,14 +1234,13 @@ async function startServer() {
     await smartCache.connect();
     await connectToFabric();
 
-    // Start pre-caching worker
     startPreCachingWorker();
 
     const PORT = 4000;
     app.listen(PORT, () => {
       console.log(`🚀 FlashChain API running on http://localhost:${PORT}`);
       console.log(`📊 Test: http://localhost:${PORT}/api/assets`);
-      console.log(`🔮 Pre-Caching Worker: Active (runs every 2 minutes in adaptive mode)`);
+      console.log(`🔮 Pre-Caching Worker: Active (deterministic enrichment)`);
     });
   } catch (error) {
     console.error('Failed to start:', error);
