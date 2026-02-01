@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { Package, TrendingUp, RefreshCw, Activity, Trash2, Eye, Zap, Clock, Target } from 'lucide-react';
 import Link from 'next/link';
 import { api } from './lib/api';
+import Image from 'next/image';
 
 export default function Dashboard() {
   const [role, setRole] = useState('manufacturer');
@@ -252,6 +253,38 @@ export default function Dashboard() {
     }
   }
 
+  async function handleClearAll() {
+    if (!confirm('⚠️ This will clear ALL cache, statistics, and activity logs.\n\nAre you sure you want to continue?')) {
+      return;
+    }
+
+    try {
+      const response = await fetch('http://localhost:4000/api/system/reset', {
+        method: 'POST'
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        // Reset local state
+        setStats(null);
+        setPreCacheActivity([]);
+        setPredictions([]);
+        setEffectiveness(null);
+
+        alert('✅ System Reset Complete!\n\n• All cache cleared\n• Statistics reset\n• Activity logs cleared\n\nYou can now test pre-caching from scratch.');
+
+        // Reload data
+        await loadData();
+      } else {
+        alert('❌ Failed to reset system: ' + data.error);
+      }
+    } catch (error) {
+      alert('❌ Error: ' + error.message);
+    }
+  }
+
+
   function getTimeSince(timestamp) {
     const seconds = Math.floor((Date.now() - timestamp) / 1000);
     if (seconds < 60) return `${seconds}s ago`;
@@ -275,9 +308,9 @@ export default function Dashboard() {
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex justify-between items-center">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">FlashChain</h1>
+              <Image src="/flashchain-logo.png" width={200} height={40} alt="FlashChain Logo" />
               <p className="text-sm text-gray-600 mt-0.5">
-                Predictive Pre-Caching for Supply Chain
+                Instant Access. Immutable Truth.
               </p>
             </div>
 
@@ -296,57 +329,71 @@ export default function Dashboard() {
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 py-3">
           <div className="flex justify-between items-center flex-wrap gap-3">
-            <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-gray-700">Role:</label>
-              <select
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-                className="px-3 py-1.5 text-sm text-gray-900 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-gray-400"
-              >
-                <option value="manufacturer">🏭 Manufacturer</option>
-                <option value="distributor">🚚 Distributor</option>
-                <option value="retailer">🏪 Retailer</option>
-                <option value="default">👔 Manager</option>
-              </select>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-gray-700">Role:</label>
+                <select
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  className="px-3 py-1.5 text-sm text-gray-900 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-gray-400"
+                >
+                  <option value="manufacturer">🏭 Manufacturer</option>
+                  <option value="distributor">🚚 Distributor</option>
+                  <option value="retailer">🏪 Retailer</option>
+                  <option value="default">👔 Manager</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-gray-700">Cache:</label>
+                <select
+                  value={cacheMode}
+                  onChange={(e) => handleCacheModeChange(e.target.value)}
+                  className="px-3 py-1.5 text-sm text-gray-900 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-gray-400"
+                >
+                  <option value="adaptive">Adaptive (Smart)</option>
+                  <option value="simple">Simple (Fixed TTL)</option>
+                  <option value="disabled">Disabled</option>
+                </select>
+              </div>
             </div>
 
             <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-gray-700">Cache:</label>
-              <select
-                value={cacheMode}
-                onChange={(e) => handleCacheModeChange(e.target.value)}
-                className="px-3 py-1.5 text-sm text-gray-900 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-gray-400"
-              >
-                <option value="adaptive">Adaptive (Smart)</option>
-                <option value="simple">Simple (Fixed TTL)</option>
-                <option value="disabled">Disabled</option>
-              </select>
-            </div>
-
-            {lastQuery && (
-              <div className="flex items-center gap-3 text-sm">
-                <span className={`px-2 py-1 rounded font-medium ${lastQuery.source === 'cache'
+              {lastQuery && (
+                <div className="flex items-center gap-3 text-sm">
+                  <span className={`px-2 py-1 rounded font-medium ${lastQuery.source === 'cache'
                     ? 'bg-gray-100 text-gray-800 border border-gray-300'
                     : 'bg-gray-800 text-white'
-                  }`}>
-                  {lastQuery.source === 'cache' ? 'CACHE' : 'BLOCKCHAIN'}
-                </span>
-                <span className="text-gray-700">
-                  Latency: <span className="font-bold text-gray-900">{lastQuery.latency}ms</span>
-                </span>
-              </div>
-            )}
+                    }`}>
+                    {lastQuery.source === 'cache' ? 'CACHE' : 'BLOCKCHAIN'}
+                  </span>
+                  <span className="text-gray-700">
+                    Latency: <span className="font-bold text-gray-900">{lastQuery.latency}ms</span>
+                  </span>
+                </div>
+              )}
 
-            <button
-              onClick={loadData}
-              className="px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded transition flex items-center gap-2 font-medium border border-gray-300"
-            >
-              <RefreshCw size={14} />
-              Refresh
-            </button>
+              <button
+                onClick={loadData}
+                className="px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded transition flex items-center gap-2 font-medium border border-gray-300"
+              >
+                <RefreshCw size={14} />
+                Refresh
+              </button>
+
+              <button
+                onClick={handleClearAll}
+                className="px-3 py-1.5 text-sm text-white bg-red-600 hover:bg-red-700 rounded transition flex items-center gap-2 font-bold border border-red-700"
+                title="Clear all cache, stats, and activity"
+              >
+                <Trash2 size={14} />
+                Clear All
+              </button>
+            </div>
           </div>
         </div>
       </div>
+
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 py-6">
@@ -451,8 +498,8 @@ export default function Dashboard() {
                         <div className="flex justify-between items-start mb-2">
                           <span className="font-bold text-gray-900 text-sm">{pred.assetId}</span>
                           <span className={`text-xs px-2 py-1 rounded font-bold ${pred.minutesUntil < 5
-                              ? 'bg-gray-800 text-white'
-                              : 'bg-gray-200 text-gray-700 border border-gray-300'
+                            ? 'bg-gray-800 text-white'
+                            : 'bg-gray-200 text-gray-700 border border-gray-300'
                             }`}>
                             ⏱️ {pred.minutesUntil}m
                           </span>

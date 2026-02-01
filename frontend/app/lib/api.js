@@ -58,6 +58,12 @@ export const api = {
     return response.data;
   },
 
+  // Add this to your api.js exports
+  async resetSystem() {
+    const response = await axios.post(`${API_URL}/api/system/reset`);
+    return response.data;
+  },
+
   // Set cache mode
   async setCacheMode(mode) {
     const response = await axios.post(`${API_URL}/api/cache/mode`, { mode });

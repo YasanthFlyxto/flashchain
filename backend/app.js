@@ -124,7 +124,7 @@ async function preCachingWorker() {
 
       if (evaluation.shouldPreCache) {
         const cacheKey = `asset:${asset.ID}`;
-        
+
         // Use cacheWithContext with custom TTL
         await smartCache.cacheWithContext(cacheKey, asset, {
           stakeholderType: 'system',
@@ -382,6 +382,34 @@ app.get('/api/precache/activity', (req, res) => {
     totalPreCached: preCacheActivity.length
   });
 });
+
+// Clear everything - cache, stats, activity
+app.post('/api/system/reset', async (req, res) => {
+  try {
+    // 1. Flush all Redis cache
+    await smartCache.flushAll();
+
+    // 2. Reset statistics
+    smartCache.resetStats();
+
+    // 3. Clear pre-cache activity log
+    preCacheActivity = [];
+
+    // 4. Clear access logs
+    Object.keys(accessLog).forEach(key => delete accessLog[key]);
+
+    console.log('🧹 SYSTEM RESET: Cache flushed, stats reset, activity cleared');
+
+    res.json({
+      success: true,
+      message: 'All cache, statistics, and activity logs cleared',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 
 // Reset statistics
 app.post('/api/stats/reset', async (req, res) => {
@@ -695,7 +723,7 @@ app.post('/api/precache/trigger/:assetId', async (req, res) => {
 
     if (evaluation.shouldPreCache) {
       const cacheKey = `asset:${assetId}`;
-      
+
       await smartCache.cacheWithContext(cacheKey, enrichedAsset, {
         stakeholderType: 'system',
         preCached: true,
@@ -750,25 +778,25 @@ app.post('/api/precache/trigger/:assetId', async (req, res) => {
 app.get('/api/asset/:id/compare', async (req, res) => {
   const assetId = req.params.id;
   const stakeholder = req.query.stakeholder || 'default';
-  
+
   try {
     // 1. Query from cache (if exists)
     const cacheKey = `asset:${assetId}`;
     const cacheStart = Date.now();
     const cached = await smartCache.get(cacheKey);
     const cacheLatency = Date.now() - cacheStart;
-    
+
     // 2. Query from blockchain (always - for comparison)
     const blockchainStart = Date.now();
     const result = await contract.evaluateTransaction('ReadAsset', assetId);
     const assetData = JSON.parse(result.toString());
     const blockchainLatency = Date.now() - blockchainStart;
-    
+
     // Calculate savings
     const savings = cached ? blockchainLatency - cacheLatency : 0;
     const improvement = cached ? ((savings / blockchainLatency) * 100).toFixed(1) : 0;
     const speedup = cached ? (blockchainLatency / cacheLatency).toFixed(1) : 0;
-    
+
     res.json({
       success: true,
       assetId,
@@ -795,7 +823,7 @@ app.get('/api/asset/:id/compare', async (req, res) => {
       },
       data: assetData
     });
-    
+
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -809,28 +837,28 @@ app.get('/api/asset/:id/compare', async (req, res) => {
 app.get('/api/precache/effectiveness', (req, res) => {
   try {
     const stats = smartCache.getStats();
-    
+
     let preCacheHits = 0;
     let regularCacheHits = 0;
     let cacheMisses = 0;
-    
+
     Object.values(stats).forEach(s => {
       preCacheHits += s.preCached || 0;
       regularCacheHits += (s.hits - (s.preCached || 0));
       cacheMisses += s.misses;
     });
-    
+
     const totalQueries = preCacheHits + regularCacheHits + cacheMisses;
-    const preCacheRate = totalQueries > 0 
-      ? ((preCacheHits / totalQueries) * 100).toFixed(1) 
+    const preCacheRate = totalQueries > 0
+      ? ((preCacheHits / totalQueries) * 100).toFixed(1)
       : 0;
-    
+
     // Estimated time savings (cache ~5ms vs blockchain ~280ms)
     const avgCacheLatency = 5;
     const avgBlockchainLatency = 280;
     const timeSavedPreCached = preCacheHits * (avgBlockchainLatency - avgCacheLatency);
     const timeSavedRegular = regularCacheHits * (avgBlockchainLatency - avgCacheLatency);
-    
+
     res.json({
       success: true,
       effectiveness: {
@@ -848,7 +876,7 @@ app.get('/api/precache/effectiveness', (req, res) => {
       },
       byStakeholder: stats
     });
-    
+
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
