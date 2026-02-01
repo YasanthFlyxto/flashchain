@@ -11,7 +11,7 @@ app.use(express.json());
 const cors = require('cors');
 app.use(cors());
 
-let gateway, network, contract;
+let gateway, network, contract, wallet, ccp;
 
 // Cache mode control
 let cacheMode = 'adaptive'; // 'adaptive' | 'simple' | 'disabled'
@@ -26,16 +26,16 @@ const preCacheRules = new PreCachingRulesEngine();
 const accessLog = {}; // { assetId: [{stakeholder, timestamp}] }
 
 // Pre-caching activity log (for dashboard display)
-const preCacheActivityLog = [];
+let preCacheActivity = [];
 
 // Connect to Hyperledger Fabric
 async function connectToFabric() {
   try {
     const ccpPath = path.resolve(__dirname, '..', '..', 'fabric-samples', 'test-network', 'organizations', 'peerOrganizations', 'org1.example.com', 'connection-org1.json');
-    const ccp = JSON.parse(fs.readFileSync(ccpPath, 'utf8'));
+    ccp = JSON.parse(fs.readFileSync(ccpPath, 'utf8'));
 
     const walletPath = path.join(process.cwd(), 'wallet');
-    const wallet = await Wallets.newFileSystemWallet(walletPath);
+    wallet = await Wallets.newFileSystemWallet(walletPath);
 
     const identity = await wallet.get('admin');
     if (!identity) {
@@ -62,72 +62,109 @@ async function connectToFabric() {
 // PRE-CACHING BACKGROUND WORKER
 // ========================================
 
-function startPreCachingWorker() {
-  console.log('🔮 Pre-Caching Worker: Started');
-  
-  setInterval(async () => {
-    if (cacheMode !== 'adaptive') {
-      return; // Only run in adaptive mode
-    }
-    
-    try {
-      console.log('🔮 Pre-Caching Worker: Evaluating rules...');
-      
-      // Get all assets from blockchain
-      const result = await contract.evaluateTransaction('GetAllAssets');
-      const allAssets = JSON.parse(result.toString());
-      
-      let evaluationCount = 0;
-      let preCachedCount = 0;
-      
-      for (const asset of allAssets) {
-        evaluationCount++;
+async function preCachingWorker() {
+  if (cacheMode !== 'adaptive') {
+    return;
+  }
+
+  try {
+    console.log('🔮 Pre-Caching Worker: Evaluating rules...');
+
+    const result = await contract.evaluateTransaction('GetAllAssets');
+    const allAssets = JSON.parse(result.toString());
+
+    // Enrich assets with simulated location/status data
+    const enrichedAssets = allAssets.map(asset => {
+      const ownerLower = asset.Owner.toLowerCase();
+      const isInTransit = ownerLower.includes('transit') || ownerLower.includes('shipping');
+      const isNearCustoms = ownerLower.includes('customs');
+      const isDelivered = ownerLower.includes('delivered') || ownerLower.includes('warehouse');
+      const isRetailer = ownerLower.includes('retailer');
+
+      let checkpointDistance = 9999;
+      let destinationDistance = 9999;
+      let nextCheckpoint = null;
+      let eta = null;
+
+      if (isInTransit) {
+        checkpointDistance = Math.floor(Math.random() * 30) + 5;
+        destinationDistance = Math.floor(Math.random() * 80) + 20;
+        nextCheckpoint = 'Customs-Delhi';
+        eta = new Date(Date.now() + (checkpointDistance * 3 * 60000)).toISOString();
+      } else if (isNearCustoms) {
+        checkpointDistance = Math.floor(Math.random() * 15) + 2;
+        destinationDistance = Math.floor(Math.random() * 40) + 10;
+        nextCheckpoint = 'Customs-Processing';
+        eta = new Date(Date.now() + 30 * 60000).toISOString();
+      } else if (isRetailer) {
+        checkpointDistance = 9999;
+        destinationDistance = Math.floor(Math.random() * 45) + 5;
+        nextCheckpoint = null;
+        eta = new Date(Date.now() + 60 * 60000).toISOString();
+      }
+
+      return {
+        ...asset,
+        Status: isInTransit ? 'In-Transit' :
+          isNearCustoms ? 'Customs-Processing' :
+            isDelivered ? 'Delivered' :
+              isRetailer ? 'At-Retailer' : 'Warehouse',
+        CheckpointDistance: checkpointDistance,
+        DestinationDistance: destinationDistance,
+        NextCheckpoint: nextCheckpoint,
+        ETA: eta,
+        CreatedAt: new Date(Date.now() - Math.random() * 86400000).toISOString()
+      };
+    });
+
+    // Evaluate rules on enriched assets
+    for (const asset of enrichedAssets) {
+      const assetAccessLog = accessLog[asset.ID] || [];
+      const evaluation = preCacheRules.evaluatePreCachingRules(asset, assetAccessLog);
+
+      if (evaluation.shouldPreCache) {
+        const cacheKey = `asset:${asset.ID}`;
         
-        // Get access log for this asset
-        const assetAccessLog = accessLog[asset.ID] || [];
-        
-        // Evaluate pre-caching rules
-        const evaluation = preCacheRules.evaluatePreCachingRules(asset, assetAccessLog);
-        
-        if (evaluation.shouldPreCache) {
-          console.log(`✅ PRE-CACHING: ${asset.ID}`);
-          console.log(`   Rule: ${evaluation.rule}`);
-          console.log(`   Priority: ${evaluation.priority}`);
-          console.log(`   Reason: ${evaluation.reason}`);
-          console.log(`   Stakeholders: ${evaluation.stakeholders.join(', ')}`);
-          
-          // Pre-cache for predicted stakeholders
-          for (const stakeholder of evaluation.stakeholders) {
-            const cacheKey = `asset:${asset.ID}`;
-            await smartCache.cacheWithContext(cacheKey, asset, { 
-              stakeholderType: stakeholder,
-              preCached: true 
-            });
-          }
-          
-          preCachedCount++;
-          
-          // Add to activity log (keep last 20)
-          preCacheActivityLog.unshift({
-            assetId: asset.ID,
-            rule: evaluation.rule,
-            priority: evaluation.priority,
-            reason: evaluation.reason,
-            stakeholders: evaluation.stakeholders,
-            timestamp: Date.now()
-          });
-          
-          if (preCacheActivityLog.length > 20) {
-            preCacheActivityLog.pop();
-          }
+        // ✅ Use cacheWithContext with custom TTL
+        await smartCache.cacheWithContext(cacheKey, asset, {
+          stakeholderType: 'system',
+          preCached: true,
+          ttl: evaluation.ttl || 1800
+        });
+
+        console.log(`✅ PRE-CACHED: ${asset.ID} | Rule: ${evaluation.triggeredRule} | TTL: ${evaluation.ttl}s`);
+
+        // Log activity
+        preCacheActivity.unshift({
+          assetId: asset.ID,
+          rule: evaluation.triggeredRule,
+          reason: evaluation.reason,
+          ttl: evaluation.ttl,
+          timestamp: Date.now(),
+          assetValue: asset.AppraisedValue,
+          status: asset.Status,
+          checkpointDistance: asset.CheckpointDistance,
+          stakeholders: evaluation.stakeholders,
+          manual: false
+        });
+
+        if (preCacheActivity.length > 50) {
+          preCacheActivity = preCacheActivity.slice(0, 50);
         }
       }
-      
-      console.log(`✅ Pre-Caching Worker: Complete - Evaluated ${evaluationCount} assets, pre-cached ${preCachedCount}`);
-    } catch (error) {
-      console.error('❌ Pre-caching worker failed:', error.message);
     }
-  }, 120000); // Every 2 minutes
+
+    console.log('🔮 Pre-Caching Worker: Cycle complete\n');
+
+  } catch (error) {
+    console.error('❌ Pre-Caching Worker Error:', error.message);
+  }
+}
+
+function startPreCachingWorker() {
+  console.log('🔮 Pre-Caching Worker: Started');
+  setInterval(preCachingWorker, 120000); // Every 2 minutes
+  setTimeout(preCachingWorker, 5000); // Run after 5 seconds
 }
 
 // ========================================
@@ -142,7 +179,7 @@ app.get('/api/asset/:id', async (req, res) => {
   const cacheKey = `asset:${assetId}`;
 
   try {
-    // Track access pattern (for Rule 2)
+    // Track access pattern
     if (!accessLog[assetId]) {
       accessLog[assetId] = [];
     }
@@ -150,8 +187,7 @@ app.get('/api/asset/:id', async (req, res) => {
       stakeholder: stakeholderType,
       timestamp: Date.now()
     });
-    
-    // Keep only last 24 hours
+
     accessLog[assetId] = accessLog[assetId].filter(
       a => a.timestamp > Date.now() - 86400000
     );
@@ -173,18 +209,16 @@ app.get('/api/asset/:id', async (req, res) => {
           hash: cached.hash ? cached.hash.substring(0, 16) + '...' : 'N/A'
         });
       }
-      
+
       smartCache.trackMiss(stakeholderType);
     }
 
-    // Query blockchain
     const result = await contract.evaluateTransaction('ReadAsset', assetId);
     const assetData = JSON.parse(result.toString());
 
     let appliedTTL = 0;
     const dataHash = smartCache.generateHash(assetData);
-    
-    // Only cache if not disabled
+
     if (cacheMode !== 'disabled') {
       smartCache.setMode(cacheMode);
       await smartCache.cacheWithContext(cacheKey, assetData, { stakeholderType });
@@ -280,6 +314,27 @@ app.post('/api/shipment/transfer', async (req, res) => {
   }
 });
 
+// Delete asset
+app.delete('/api/asset/:id', async (req, res) => {
+  const startTime = Date.now();
+  const assetId = req.params.id;
+
+  try {
+    await contract.submitTransaction('DeleteAsset', assetId);
+    await smartCache.invalidate(`asset:${assetId}`);
+
+    const latency = Date.now() - startTime;
+    res.json({
+      success: true,
+      latency: `${latency}ms`,
+      message: `Asset ${assetId} deleted and cache invalidated`
+    });
+  } catch (error) {
+    console.error(`Delete failed: ${error}`);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() });
@@ -291,12 +346,10 @@ app.get('/api/stats', async (req, res) => {
     const stats = smartCache.getStats();
     let totalHits = 0;
     let totalMisses = 0;
-    let totalPreCached = 0;
 
     Object.values(stats).forEach(s => {
       totalHits += s.hits;
       totalMisses += s.misses;
-      totalPreCached += (s.preCached || 0);
     });
 
     const totalQueries = totalHits + totalMisses;
@@ -311,7 +364,7 @@ app.get('/api/stats', async (req, res) => {
         cacheHits: totalHits,
         cacheMisses: totalMisses,
         cacheHitRate: `${cacheHitRate}%`,
-        totalPreCached,
+        totalPreCached: preCacheActivity.length,
         uptime: `${Math.floor(process.uptime())}s`
       },
       byStakeholder: stats
@@ -325,8 +378,8 @@ app.get('/api/stats', async (req, res) => {
 app.get('/api/precache/activity', (req, res) => {
   res.json({
     success: true,
-    activity: preCacheActivityLog,
-    totalPreCached: preCacheActivityLog.length
+    activity: preCacheActivity,
+    totalPreCached: preCacheActivity.length
   });
 });
 
@@ -334,7 +387,7 @@ app.get('/api/precache/activity', (req, res) => {
 app.post('/api/stats/reset', async (req, res) => {
   smartCache.resetStats();
   await smartCache.flushAll();
-  preCacheActivityLog.length = 0; // Clear activity log
+  preCacheActivity = [];
   res.json({ success: true, message: 'Statistics, cache, and pre-cache activity reset' });
 });
 
@@ -434,7 +487,6 @@ app.post('/api/benchmark/simulate', async (req, res) => {
 
   console.log(`🏁 Starting benchmark: ${numQueries} queries in ${mode} mode`);
 
-  // Set mode and reset stats
   cacheMode = mode;
   smartCache.setMode(mode);
   smartCache.resetStats();
@@ -449,7 +501,6 @@ app.post('/api/benchmark/simulate', async (req, res) => {
     cacheMisses: 0
   };
 
-  // Get REAL assets from blockchain
   let assetIds;
   try {
     const allAssetsResult = await contract.evaluateTransaction('GetAllAssets');
@@ -460,11 +511,11 @@ app.post('/api/benchmark/simulate', async (req, res) => {
       benchmarkRunning = false;
       return res.status(400).json({
         success: false,
-        error: 'No assets found in blockchain. Create some shipments first!'
+        error: 'No assets found in blockchain'
       });
     }
 
-    console.log(`📦 Using ${assetIds.length} real assets: ${assetIds.join(', ')}`);
+    console.log(`📦 Using ${assetIds.length} real assets`);
   } catch (error) {
     benchmarkRunning = false;
     return res.status(500).json({
@@ -495,7 +546,6 @@ app.post('/api/benchmark/simulate', async (req, res) => {
         smartCache.trackMiss(stakeholder);
       }
 
-      // Query blockchain
       try {
         const result = await contract.evaluateTransaction('ReadAsset', assetId);
         const assetData = JSON.parse(result.toString());
@@ -508,7 +558,7 @@ app.post('/api/benchmark/simulate', async (req, res) => {
         results.latencies.push(Date.now() - queryStart);
         benchmarkProgress = ((i + 1) / numQueries * 100).toFixed(0);
       } catch (error) {
-        console.error(`Query ${i} failed for ${assetId}:`, error.message);
+        console.error(`Query ${i} failed:`, error.message);
       }
     }
 
@@ -538,12 +588,11 @@ app.post('/api/benchmark/simulate', async (req, res) => {
   }
 });
 
-// Get benchmark results
 app.get('/api/benchmark/results', (req, res) => {
   if (!benchmarkResults) {
     return res.json({
       success: false,
-      message: 'No benchmark results available. Run a simulation first.'
+      message: 'No benchmark results available'
     });
   }
 
@@ -553,7 +602,6 @@ app.get('/api/benchmark/results', (req, res) => {
   });
 });
 
-// Benchmark status
 app.get('/api/benchmark/status', (req, res) => {
   res.json({
     running: benchmarkRunning,
@@ -561,12 +609,203 @@ app.get('/api/benchmark/status', (req, res) => {
   });
 });
 
+// Get predictions
+app.get('/api/precache/predictions', async (req, res) => {
+  try {
+    const result = await contract.evaluateTransaction('GetAllAssets');
+    const allAssets = JSON.parse(result.toString());
+
+    const predictions = [];
+    const now = Date.now();
+
+    for (const asset of allAssets) {
+      const ownerLower = asset.Owner.toLowerCase();
+      const isInTransit = ownerLower.includes('transit') || ownerLower.includes('shipping');
+      const isNearCustoms = ownerLower.includes('customs');
+
+      if (isInTransit) {
+        const minutesUntilCheckpoint = Math.floor(Math.random() * 20) + 3;
+        predictions.push({
+          assetId: asset.ID,
+          event: 'Approaching Checkpoint',
+          timeUntil: minutesUntilCheckpoint * 60 * 1000,
+          minutesUntil: minutesUntilCheckpoint,
+          reason: `${asset.ID} will reach customs checkpoint in ${minutesUntilCheckpoint} minutes`,
+          rule: 'Rule 1: Checkpoint Proximity',
+          checkpointDistance: Math.floor(Math.random() * 15) + 5,
+          eta: new Date(now + minutesUntilCheckpoint * 60000).toISOString(),
+          assetValue: asset.AppraisedValue,
+          willTrigger: minutesUntilCheckpoint < 15,
+          priority: asset.AppraisedValue > 50000 ? 'high' : 'medium'
+        });
+      }
+
+      if (isNearCustoms && asset.AppraisedValue > 30000) {
+        const minutesUntilAccess = Math.floor(Math.random() * 10) + 2;
+        predictions.push({
+          assetId: asset.ID,
+          event: 'High-Value Customs Processing',
+          timeUntil: minutesUntilAccess * 60 * 1000,
+          minutesUntil: minutesUntilAccess,
+          reason: `High-value asset likely to be accessed by customs officer in ${minutesUntilAccess} minutes`,
+          rule: 'Rule 3: High-Value Asset',
+          checkpointDistance: 2,
+          assetValue: asset.AppraisedValue,
+          willTrigger: true,
+          priority: 'high'
+        });
+      }
+    }
+
+    predictions.sort((a, b) => a.timeUntil - b.timeUntil);
+
+    res.json({
+      success: true,
+      predictions: predictions.slice(0, 5),
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Manual pre-cache trigger
+app.post('/api/precache/trigger/:assetId', async (req, res) => {
+  try {
+    const { assetId } = req.params;
+
+    const result = await contract.evaluateTransaction('ReadAsset', assetId);
+    const asset = JSON.parse(result.toString());
+
+    const ownerLower = asset.Owner.toLowerCase();
+    const isInTransit = ownerLower.includes('transit');
+
+    const enrichedAsset = {
+      ...asset,
+      CheckpointDistance: isInTransit ? 8 : 9999,
+      DestinationDistance: isInTransit ? 25 : 9999,
+      NextCheckpoint: isInTransit ? 'Customs-Delhi' : null,
+      ETA: isInTransit ? new Date(Date.now() + 1800000).toISOString() : null,
+      Status: isInTransit ? 'In-Transit' : 'Warehouse'
+    };
+
+    const assetAccessLog = accessLog[assetId] || [];
+    const evaluation = preCacheRules.evaluatePreCachingRules(enrichedAsset, assetAccessLog);
+
+    if (evaluation.shouldPreCache) {
+      const cacheKey = `asset:${assetId}`;
+      
+      // ✅ Use cacheWithContext instead of direct Redis access
+      await smartCache.cacheWithContext(cacheKey, enrichedAsset, {
+        stakeholderType: 'system',
+        preCached: true,
+        ttl: evaluation.ttl || 1800
+      });
+
+      const activity = {
+        assetId,
+        rule: evaluation.triggeredRule,
+        reason: evaluation.reason,
+        ttl: evaluation.ttl,
+        timestamp: Date.now(),
+        assetValue: asset.AppraisedValue,
+        status: enrichedAsset.Status,
+        checkpointDistance: enrichedAsset.CheckpointDistance,
+        stakeholders: evaluation.stakeholders,
+        manual: true
+      };
+
+      preCacheActivity.unshift(activity);
+      if (preCacheActivity.length > 50) preCacheActivity = preCacheActivity.slice(0, 50);
+
+      console.log(`✅ MANUAL PRE-CACHE: ${assetId} | Rule: ${evaluation.triggeredRule}`);
+
+      res.json({
+        success: true,
+        cached: true,
+        evaluation,
+        activity,
+        message: `Successfully pre-cached ${assetId}`
+      });
+
+    } else {
+      res.json({
+        success: true,
+        cached: false,
+        evaluation,
+        message: `Asset ${assetId} does not meet pre-cache criteria`
+      });
+    }
+
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Simulate event
+app.post('/api/simulate/event', async (req, res) => {
+  try {
+    const { scenario } = req.body;
+
+    let assetId, updates;
+
+    switch (scenario) {
+      case 'approaching_checkpoint':
+        assetId = 'SHIP004';
+        updates = { Owner: 'Customs-Approaching' };
+        break;
+      case 'high_value_transit':
+        assetId = 'SHIP006';
+        updates = { Owner: 'Distributor-Transit-Express' };
+        break;
+      case 'multi_access':
+        assetId = 'SHIP001';
+        accessLog[assetId] = accessLog[assetId] || [];
+        accessLog[assetId].push(
+          { role: 'manufacturer', timestamp: Date.now() - 600000 },
+          { role: 'distributor', timestamp: Date.now() - 300000 },
+          { role: 'retailer', timestamp: Date.now() - 100000 }
+        );
+        break;
+      default:
+        return res.status(400).json({ success: false, error: 'Unknown scenario' });
+    }
+
+    if (updates) {
+      const asset = JSON.parse((await contract.evaluateTransaction('ReadAsset', assetId)).toString());
+
+      await contract.submitTransaction(
+        'UpdateAsset',
+        assetId,
+        asset.Color,
+        asset.Size.toString(),
+        updates.Owner || asset.Owner,
+        asset.AppraisedValue.toString()
+      );
+    }
+
+    // Trigger pre-cache worker immediately
+    setTimeout(() => preCachingWorker(), 500);
+
+    res.json({
+      success: true,
+      scenario,
+      assetId,
+      message: `Simulated ${scenario} for ${assetId}. Pre-cache worker triggered.`
+    });
+
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Start server
 async function startServer() {
   try {
     await smartCache.connect();
     await connectToFabric();
-    
+
     // Start pre-caching worker
     startPreCachingWorker();
 

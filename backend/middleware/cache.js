@@ -85,7 +85,6 @@ class SmartCache {
 
     /**
      * Generate cryptographic hash for data integrity verification
-     * Addresses: Security-speed balance
      */
     generateHash(data) {
         return crypto.createHash('sha256')
@@ -95,12 +94,15 @@ class SmartCache {
 
     /**
      * Cache data with context-aware TTL
+     * ✅ NOW SUPPORTS CUSTOM TTL via context.ttl
      */
     async cacheWithContext(key, data, context = {}) {
         if (!this.isReady) return;
 
-        const { stakeholderType = 'default', preCached = false } = context;
-        const ttl = this.calculateAdaptiveTTL(data, stakeholderType);
+        const { stakeholderType = 'default', preCached = false, ttl = null } = context;
+
+        // ✅ Use custom TTL if provided, otherwise calculate adaptive TTL
+        const finalTTL = ttl || this.calculateAdaptiveTTL(data, stakeholderType);
         const dataHash = this.generateHash(data);
 
         const cacheEntry = {
@@ -108,15 +110,15 @@ class SmartCache {
             hash: dataHash,
             stakeholderType: stakeholderType,
             cachedAt: Date.now(),
-            ttl: ttl,
+            ttl: finalTTL,
             mode: this.mode,
             preCached: preCached
         };
 
         try {
-            await this.client.setEx(key, ttl, JSON.stringify(cacheEntry));
+            await this.client.setEx(key, finalTTL, JSON.stringify(cacheEntry));
             const preCacheLabel = preCached ? ' [PRE-CACHED]' : '';
-            console.log(`📦 CACHED: ${key} | TTL: ${ttl}s | Mode: ${this.mode} | Type: ${stakeholderType}${preCacheLabel} | Hash: ${dataHash.substring(0, 8)}...`);
+            console.log(`📦 CACHED: ${key} | TTL: ${finalTTL}s | Mode: ${this.mode} | Type: ${stakeholderType}${preCacheLabel} | Hash: ${dataHash.substring(0, 8)}...`);
 
             // Track pre-caching stats
             if (preCached && this.stats[stakeholderType]) {
@@ -177,7 +179,6 @@ class SmartCache {
 
     /**
      * Track cache miss for statistics
-     * Called from app.js when cache returns null
      */
     trackMiss(stakeholderType = 'default') {
         if (this.stats[stakeholderType]) {
@@ -260,6 +261,13 @@ class SmartCache {
             byStakeholder: this.stats
         };
     }
+
+    /**
+     * ✅ Get Redis client (for direct access when needed)
+     */
+    getClient() {
+        return this.client;
+    }
 }
 
 // ========================================
@@ -281,10 +289,12 @@ class PreCachingRulesEngine {
             console.log(`🎯 RULE 1 TRIGGERED: Checkpoint proximity - ${assetData.ID}`);
             return {
                 trigger: true,
-                rule: 'checkpoint-proximity',
+                rule: 'Rule 1: Checkpoint Proximity',
+                triggeredRule: 'Rule 1',
                 priority: 'HIGH',
                 stakeholders: ['customs', 'distributor', 'default'],
-                reason: `${assetData.NextCheckpoint} checkpoint in ${etaHours.toFixed(1)}h (${distanceToCheckpoint}km away)`
+                reason: `Asset ${distanceToCheckpoint}km from checkpoint ${assetData.NextCheckpoint} with ETA ${etaHours.toFixed(1)}h`,
+                ttl: 3600 // 1 hour - critical for checkpoint processing
             };
         }
         return { trigger: false };
@@ -303,10 +313,12 @@ class PreCachingRulesEngine {
             console.log(`🎯 RULE 2 TRIGGERED: Unusual access pattern - ${assetId}`);
             return {
                 trigger: true,
-                rule: 'access-pattern',
+                rule: 'Rule 2: Access Pattern',
+                triggeredRule: 'Rule 2',
                 priority: 'MEDIUM',
                 stakeholders: ['manufacturer', 'distributor', 'retailer', 'default'],
-                reason: `${recentAccesses.length} accesses by ${uniqueOrgs} different organizations in 1h (potential dispute)`
+                reason: `${recentAccesses.length} accesses by ${uniqueOrgs} different organizations in 1h`,
+                ttl: 2400 // 40 minutes - active monitoring period
             };
         }
         return { trigger: false };
@@ -324,10 +336,12 @@ class PreCachingRulesEngine {
             console.log(`🎯 RULE 3 TRIGGERED: High-value near destination - ${assetData.ID}`);
             return {
                 trigger: true,
-                rule: 'high-value-destination',
+                rule: 'Rule 3: High-Value Near Destination',
+                triggeredRule: 'Rule 3',
                 priority: 'HIGH',
-                stakeholders: ['retailer', 'default'],
-                reason: `$${assetData.AppraisedValue} shipment only ${distanceToDest}km from destination (inspection imminent)`
+                stakeholders: ['retailer', 'distributor', 'default'],
+                reason: `High-value ($${assetData.AppraisedValue}) asset ${distanceToDest}km from destination`,
+                ttl: 1800 // 30 minutes - critical for final delivery
             };
         }
         return { trigger: false };
@@ -360,7 +374,7 @@ class PreCachingRulesEngine {
         try {
             const eta = new Date(etaString);
             const now = new Date();
-            return (eta - now) / (1000 * 60 * 60); // milliseconds to hours
+            return (eta - now) / (1000 * 60 * 60);
         } catch (error) {
             return 999;
         }
@@ -376,11 +390,12 @@ class PreCachingRulesEngine {
             return {
                 shouldPreCache: false,
                 reason: 'Mid-journey, low priority - conserve bandwidth',
-                rule: 'dont-precache'
+                rule: 'Rule 4: Don\'t Pre-Cache',
+                triggeredRule: 'Rule 4'
             };
         }
 
-        // Check all trigger rules
+        // Check all trigger rules (order matters - priority based)
         const rules = [
             this.shouldPreCacheCheckpoint(assetData),
             this.shouldPreCacheAccessPattern(assetData.ID, accessLog),
@@ -392,19 +407,32 @@ class PreCachingRulesEngine {
         if (triggeredRule) {
             return {
                 shouldPreCache: true,
-                ...triggeredRule
+                triggeredRule: triggeredRule.triggeredRule,
+                rule: triggeredRule.rule,
+                reason: triggeredRule.reason,
+                priority: triggeredRule.priority,
+                stakeholders: triggeredRule.stakeholders,
+                ttl: triggeredRule.ttl
             };
         }
 
         return {
             shouldPreCache: false,
             reason: 'No pre-caching rules triggered',
-            rule: 'none'
+            rule: 'None',
+            triggeredRule: 'None'
         };
     }
 }
 
-// Export both classes
+// ========================================
+// EXPORTS
+// ========================================
+
 const smartCacheInstance = new SmartCache();
+
+// Export the instance with all methods
 module.exports = smartCacheInstance;
+
+// Export the class separately for creating new instances
 module.exports.PreCachingRulesEngine = PreCachingRulesEngine;
