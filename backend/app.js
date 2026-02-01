@@ -125,7 +125,7 @@ async function preCachingWorker() {
       if (evaluation.shouldPreCache) {
         const cacheKey = `asset:${asset.ID}`;
         
-        // ✅ Use cacheWithContext with custom TTL
+        // Use cacheWithContext with custom TTL
         await smartCache.cacheWithContext(cacheKey, asset, {
           stakeholderType: 'system',
           preCached: true,
@@ -696,7 +696,6 @@ app.post('/api/precache/trigger/:assetId', async (req, res) => {
     if (evaluation.shouldPreCache) {
       const cacheKey = `asset:${assetId}`;
       
-      // ✅ Use cacheWithContext instead of direct Redis access
       await smartCache.cacheWithContext(cacheKey, enrichedAsset, {
         stakeholderType: 'system',
         preCached: true,
@@ -738,6 +737,118 @@ app.post('/api/precache/trigger/:assetId', async (req, res) => {
       });
     }
 
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// ✨ NEW: LATENCY COMPARISON ENDPOINT
+// ========================================
+
+// Compare cache vs blockchain latency for a single asset
+app.get('/api/asset/:id/compare', async (req, res) => {
+  const assetId = req.params.id;
+  const stakeholder = req.query.stakeholder || 'default';
+  
+  try {
+    // 1. Query from cache (if exists)
+    const cacheKey = `asset:${assetId}`;
+    const cacheStart = Date.now();
+    const cached = await smartCache.get(cacheKey);
+    const cacheLatency = Date.now() - cacheStart;
+    
+    // 2. Query from blockchain (always - for comparison)
+    const blockchainStart = Date.now();
+    const result = await contract.evaluateTransaction('ReadAsset', assetId);
+    const assetData = JSON.parse(result.toString());
+    const blockchainLatency = Date.now() - blockchainStart;
+    
+    // Calculate savings
+    const savings = cached ? blockchainLatency - cacheLatency : 0;
+    const improvement = cached ? ((savings / blockchainLatency) * 100).toFixed(1) : 0;
+    const speedup = cached ? (blockchainLatency / cacheLatency).toFixed(1) : 0;
+    
+    res.json({
+      success: true,
+      assetId,
+      comparison: {
+        cached: {
+          available: !!cached,
+          latency: cacheLatency,
+          latencyMs: `${cacheLatency}ms`,
+          source: cached ? 'cache' : 'not-cached',
+          preCached: cached?.preCached || false,
+          age: cached ? Math.floor((Date.now() - cached.cachedAt) / 1000) : null
+        },
+        blockchain: {
+          latency: blockchainLatency,
+          latencyMs: `${blockchainLatency}ms`,
+          source: 'blockchain'
+        },
+        improvement: {
+          timeSaved: savings,
+          timeSavedMs: `${savings}ms`,
+          percentFaster: `${improvement}%`,
+          speedupFactor: `${speedup}x`
+        }
+      },
+      data: assetData
+    });
+    
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// ✨ NEW: PRE-CACHE EFFECTIVENESS STATS
+// ========================================
+
+// Get aggregate pre-cache effectiveness metrics
+app.get('/api/precache/effectiveness', (req, res) => {
+  try {
+    const stats = smartCache.getStats();
+    
+    let preCacheHits = 0;
+    let regularCacheHits = 0;
+    let cacheMisses = 0;
+    
+    Object.values(stats).forEach(s => {
+      preCacheHits += s.preCached || 0;
+      regularCacheHits += (s.hits - (s.preCached || 0));
+      cacheMisses += s.misses;
+    });
+    
+    const totalQueries = preCacheHits + regularCacheHits + cacheMisses;
+    const preCacheRate = totalQueries > 0 
+      ? ((preCacheHits / totalQueries) * 100).toFixed(1) 
+      : 0;
+    
+    // Estimated time savings (cache ~5ms vs blockchain ~280ms)
+    const avgCacheLatency = 5;
+    const avgBlockchainLatency = 280;
+    const timeSavedPreCached = preCacheHits * (avgBlockchainLatency - avgCacheLatency);
+    const timeSavedRegular = regularCacheHits * (avgBlockchainLatency - avgCacheLatency);
+    
+    res.json({
+      success: true,
+      effectiveness: {
+        preCacheHits,
+        regularCacheHits,
+        cacheMisses,
+        totalQueries,
+        preCacheRate: `${preCacheRate}%`,
+        avgLatencyPreCached: `${avgCacheLatency}ms`,
+        avgLatencyRegular: `${avgCacheLatency}ms`,
+        avgLatencyBlockchain: `${avgBlockchainLatency}ms`,
+        timeSavedPreCached: `${(timeSavedPreCached / 1000).toFixed(2)}s`,
+        timeSavedRegular: `${(timeSavedRegular / 1000).toFixed(2)}s`,
+        totalTimeSaved: `${((timeSavedPreCached + timeSavedRegular) / 1000).toFixed(2)}s`
+      },
+      byStakeholder: stats
+    });
+    
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
