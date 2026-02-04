@@ -1,8 +1,8 @@
-// app/page.jsx
+// app/page.jsx - UPDATED WITH TEST LAB LINK
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Package, TrendingUp, Clock, Database, Zap, ArrowRight, RefreshCw, Trash2, BarChart3, ChevronDown, ChevronUp } from 'lucide-react';
+import { Package, TrendingUp, Clock, Database, Zap, ArrowRight, RefreshCw, Trash2, BarChart3, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 import Link from 'next/link';
 
 export default function Dashboard() {
@@ -165,13 +165,29 @@ export default function Dashboard() {
               </p>
             </div>
 
-            <Link
-              href="/analytics"
-              className="px-4 py-2 bg-gray-900 text-white rounded hover:bg-gray-800 transition font-medium flex items-center gap-2 text-sm"
-            >
-              <BarChart3 size={16} />
-              Analytics
-            </Link>
+            <div className="flex items-center gap-2">
+              <Link
+                href="/test-lab"
+                className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition font-medium flex items-center gap-2 text-sm"
+              >
+                <Sparkles size={16} />
+                Test Lab
+              </Link>
+              <Link
+                href="/demo"
+                className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition font-medium flex items-center gap-2 text-sm"
+              >
+                <Sparkles size={16} />
+                Demo Dashboard
+              </Link>
+              <Link
+                href="/analytics"
+                className="px-4 py-2 bg-gray-900 text-white rounded hover:bg-gray-800 transition font-medium flex items-center gap-2 text-sm"
+              >
+                <BarChart3 size={16} />
+                Analytics
+              </Link>
+            </div>
           </div>
         </div>
       </header>
@@ -212,11 +228,10 @@ export default function Dashboard() {
             <div className="flex items-center gap-2">
               {lastQuery && (
                 <div className="flex items-center gap-3 text-sm">
-                  <span className={`px-2 py-1 rounded font-medium ${
-                    lastQuery.source === 'cache'
+                  <span className={`px-2 py-1 rounded font-medium ${lastQuery.source === 'cache'
                       ? 'bg-gray-100 text-gray-800 border border-gray-300'
                       : 'bg-gray-800 text-white'
-                  }`}>
+                    }`}>
                     {lastQuery.source === 'cache' ? 'CACHE' : 'BLOCKCHAIN'}
                   </span>
                   <span className="text-gray-700">
@@ -358,7 +373,7 @@ export default function Dashboard() {
                           <div className="bg-green-50 border border-green-200 rounded p-3 text-xs">
                             <p className="font-bold text-green-900 mb-1">✓ Time Saved: {comparisonData.improvement.timeSavedMs}</p>
                             <p className="text-green-700">
-                              This asset was {comparisonData.cached.preCached ? 'pre-cached by prediction rules' : 'cached from previous query'} 
+                              This asset was {comparisonData.cached.preCached ? 'pre-cached by prediction rules' : 'cached from previous query'}
                               {comparisonData.cached.age && ` (${comparisonData.cached.age}s ago)`}
                             </p>
                           </div>
@@ -407,11 +422,10 @@ export default function Dashboard() {
                     <div key={idx} className="p-3">
                       <div className="flex items-start justify-between mb-1">
                         <span className="font-bold text-gray-900 text-sm">{pred.assetId}</span>
-                        <span className={`text-xs px-2 py-0.5 rounded font-bold ${
-                          pred.priority === 'high' 
+                        <span className={`text-xs px-2 py-0.5 rounded font-bold ${pred.priority === 'high'
                             ? 'bg-red-100 text-red-700 border border-red-300'
                             : 'bg-gray-100 text-gray-700 border border-gray-300'
-                        }`}>
+                          }`}>
                           {pred.priority.toUpperCase()}
                         </span>
                       </div>

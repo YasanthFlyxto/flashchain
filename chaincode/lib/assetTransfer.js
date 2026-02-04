@@ -7,8 +7,8 @@
 'use strict';
 
 // Deterministic JSON.stringify()
-const stringify  = require('json-stringify-deterministic');
-const sortKeysRecursive  = require('sort-keys-recursive');
+const stringify = require('json-stringify-deterministic');
+const sortKeysRecursive = require('sort-keys-recursive');
 const { Contract } = require('fabric-contract-api');
 
 class AssetTransfer extends Contract {
@@ -70,23 +70,28 @@ class AssetTransfer extends Contract {
     }
 
     // CreateAsset issues a new asset to the world state with given details.
-    async CreateAsset(ctx, id, color, size, owner, appraisedValue) {
+    // CreateAsset issues a new asset to the world state with given details.
+    async CreateAsset(ctx, id, color, size, owner, appraisedValue, status) {
         const exists = await this.AssetExists(ctx, id);
         if (exists) {
             throw new Error(`The asset ${id} already exists`);
         }
 
+        // Use the status parameter directly (no derivation needed)
         const asset = {
             ID: id,
             Color: color,
             Size: Number(size),
             Owner: owner,
             AppraisedValue: Number(appraisedValue),
+            Status: status || 'Delivered'  // Use provided status or default
         };
-        // we insert data in alphabetic order using 'json-stringify-deterministic' and 'sort-keys-recursive'
+
         await ctx.stub.putState(id, Buffer.from(stringify(sortKeysRecursive(asset))));
         return JSON.stringify(asset);
     }
+
+
 
     // ReadAsset returns the asset stored in the world state with given id.
     async ReadAsset(ctx, id) {

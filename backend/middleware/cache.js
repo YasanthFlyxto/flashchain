@@ -1,151 +1,109 @@
-// middleware/cache.js - COMPLETE SYNCHRONIZED VERSION
+// middleware/cache.js - Simple Policy-Based Pre-Caching
+
 const redis = require('redis');
-const crypto = require('crypto');
 
 class SmartCache {
   constructor() {
     this.client = null;
-    this.mode = 'adaptive';
-    this.stats = {};
+    this.stats = {
+      hits: 0,
+      misses: 0,
+      preCachedWrites: 0
+    };
+  }
+
+  // ✅ Get all asset keys from Redis
+  async getAllAssetKeys() {
+    try {
+      return await this.client.keys('asset:*');
+    } catch (error) {
+      console.error('[Redis] Error getting keys:', error.message);
+      return [];
+    }
   }
 
   async connect() {
+    if (this.client) return;
+
     this.client = redis.createClient({
-      url: 'redis://localhost:6379'
+      url: process.env.REDIS_URL || 'redis://localhost:6379'
     });
 
-    this.client.on('error', (err) => console.error('Redis Error:', err));
-    this.client.on('connect', () => console.log('✅ Connected to Redis'));
+    this.client.on('error', (err) => console.error('[Redis] Connection error:', err));
+    this.client.on('connect', () => console.log('[Redis] Connected successfully'));
 
     await this.client.connect();
   }
 
-  setMode(mode) {
-    this.mode = mode;
-    console.log(`🔄 Cache mode set to: ${mode}`);
-  }
-
-  generateHash(data) {
-    return crypto.createHash('sha256').update(JSON.stringify(data)).digest('hex');
-  }
-
-  calculateAdaptiveTTL(asset, stakeholderType = 'default') {
-    if (this.mode === 'simple') {
-      return 300; // Fixed 5 minutes for simple mode
-    }
-
-    if (this.mode === 'disabled') {
-      return 0;
-    }
-
-    // Adaptive TTL based on stakeholder needs
-    const ownerLower = asset.Owner?.toLowerCase() || '';
-    let baseTTL = 600; // 10 minutes default
-
-    // Stakeholder-specific TTL
-    if (stakeholderType === 'manufacturer') {
-      baseTTL = 1800; // 30 minutes (less frequent updates at origin)
-    } else if (stakeholderType === 'distributor') {
-      baseTTL = 900; // 15 minutes (moderate updates)
-    } else if (stakeholderType === 'retailer') {
-      baseTTL = 300; // 5 minutes (frequent updates at delivery)
-    }
-
-    // Asset status adjustments
-    if (ownerLower.includes('transit') || ownerLower.includes('shipping')) {
-      baseTTL = Math.floor(baseTTL * 0.5); // Shorter TTL for in-transit
-    } else if (ownerLower.includes('warehouse') || ownerLower.includes('manufacturer')) {
-      baseTTL = Math.floor(baseTTL * 1.5); // Longer TTL for static assets
-    }
-
-    // High-value assets get shorter TTL (more critical tracking)
-    if (asset.AppraisedValue > 50000) {
-      baseTTL = Math.floor(baseTTL * 0.8);
-    }
-
-    return baseTTL;
-  }
-
+  /**
+   * Cache an asset with TTL and metadata
+   * @param {string} key - Cache key (e.g., 'asset:PROD-123')
+   * @param {object} data - Asset data to cache
+   * @param {object} context - { preCached: boolean, ttl: number (seconds), triggeredRule, ruleName, reason, priority }
+   */
   async cacheWithContext(key, data, context = {}) {
-    if (this.mode === 'disabled') {
+    if (!this.client) {
+      throw new Error('[SmartCache] Redis client not connected');
+    }
+
+    const { preCached = false, ttl, triggeredRule, ruleName, reason, priority } = context;
+
+    if (!ttl || ttl <= 0) {
+      console.warn('[SmartCache] Invalid TTL, skipping cache write for key:', key);
       return;
     }
 
-    const { stakeholderType = 'default', preCached = false, ttl = null } = context;
-    
-    const dataHash = this.generateHash(data);
-    const calculatedTTL = ttl || this.calculateAdaptiveTTL(data, stakeholderType);
-
-    const cacheEntry = {
+    // Store entry with metadata
+    const entry = {
       data,
-      hash: dataHash,
-      ttl: calculatedTTL,
       cachedAt: Date.now(),
-      stakeholder: stakeholderType,
-      preCached: preCached,
-      mode: this.mode
+      preCached,
+      ttl,
+      triggeredRule,
+      ruleName,
+      reason,
+      priority
     };
 
-    await this.client.setEx(key, calculatedTTL, JSON.stringify(cacheEntry));
+    await this.client.setEx(key, ttl, JSON.stringify(entry));
 
-    // Track cache hit for pre-cached items
     if (preCached) {
-      if (!this.stats[stakeholderType]) {
-        this.stats[stakeholderType] = { hits: 0, misses: 0, preCached: 0 };
-      }
-      this.stats[stakeholderType].preCached = (this.stats[stakeholderType].preCached || 0) + 1;
+      this.stats.preCachedWrites++;
+      console.log(`[SmartCache] Pre-cached: ${key} (TTL: ${ttl}s)`);
     }
   }
 
+  /**
+   * Get cached asset
+   * @param {string} key - Cache key
+   * @returns {object|null} Cached entry or null
+   */
   async get(key) {
-    if (this.mode === 'disabled') {
+    if (!this.client) {
+      throw new Error('[SmartCache] Redis client not connected');
+    }
+
+    const raw = await this.client.get(key);
+
+    if (!raw) {
+      this.stats.misses++;
       return null;
     }
 
-    try {
-      const cached = await this.client.get(key);
-      if (cached) {
-        const entry = JSON.parse(cached);
-        
-        // Track hit
-        const stakeholder = entry.stakeholder || 'default';
-        if (!this.stats[stakeholder]) {
-          this.stats[stakeholder] = { hits: 0, misses: 0, preCached: 0 };
-        }
-        this.stats[stakeholder].hits++;
-
-        return entry;
-      }
-      return null;
-    } catch (error) {
-      console.error('Cache get error:', error);
-      return null;
-    }
-  }
-
-  trackMiss(stakeholderType = 'default') {
-    if (!this.stats[stakeholderType]) {
-      this.stats[stakeholderType] = { hits: 0, misses: 0, preCached: 0 };
-    }
-    this.stats[stakeholderType].misses++;
+    this.stats.hits++;
+    return JSON.parse(raw);
   }
 
   async invalidate(key) {
-    try {
-      await this.client.del(key);
-      console.log(`🗑️  Cache invalidated: ${key}`);
-    } catch (error) {
-      console.error('Cache invalidation error:', error);
-    }
+    if (!this.client) return;
+    await this.client.del(key);
+    console.log(`[SmartCache] Invalidated: ${key}`);
   }
 
   async flushAll() {
-    try {
-      await this.client.flushAll();
-      console.log('🧹 All cache cleared');
-    } catch (error) {
-      console.error('Cache flush error:', error);
-    }
+    if (!this.client) return;
+    await this.client.flushAll();
+    console.log('[SmartCache] All cache cleared');
   }
 
   getStats() {
@@ -153,139 +111,179 @@ class SmartCache {
   }
 
   resetStats() {
-    this.stats = {};
-    console.log('📊 Statistics reset');
+    this.stats = { hits: 0, misses: 0, preCachedWrites: 0 };
+    console.log('[SmartCache] Statistics reset');
+  }
+
+  // ✅ Expose the redis client for direct access
+  getClient() {
+    return this.client;
   }
 }
 
-// ========================================
-// PRE-CACHING RULES ENGINE (SYNCHRONIZED)
-// ========================================
-
+/**
+ * Pre-Caching Rules Engine
+ * Implements the 4 rules from FYP architecture diagram:
+ *  - Rule 1: Checkpoint Proximity
+ *  - Rule 2: Access Pattern Detection (multi-stakeholder)
+ *  - Rule 3: High-Value Shipment Near Destination
+ *  - Rule 4: Counter-example (DO NOT pre-cache)
+ */
 class PreCachingRulesEngine {
   constructor() {
-    this.rules = [
+    this.ruleDefinitions = [
       {
         id: 'Rule 1',
         name: 'Checkpoint Proximity',
-        description: 'Pre-cache assets approaching checkpoints within 20km',
-        evaluate: (asset, accessLog) => {
-          const checkpointDistance = asset.CheckpointDistance || 9999;
-          const isInTransit = asset.Status?.toLowerCase().includes('transit');
-          
-          if (isInTransit && checkpointDistance < 20) {
-            return {
-              shouldCache: true,
-              ttl: 1800, // 30 minutes
-              reason: `Asset approaching checkpoint (${checkpointDistance}km away)`,
-              priority: checkpointDistance < 10 ? 'high' : 'medium',
-              stakeholders: ['customs', 'logistics', 'distributor']
-            };
-          }
-          return { shouldCache: false };
-        }
+        description: 'Pre-cache shipments approaching checkpoints within 20km and ETA < 1 hour'
       },
       {
         id: 'Rule 2',
-        name: 'Multi-Stakeholder Access',
-        description: 'Pre-cache assets accessed by 3+ different stakeholders in last 24h',
-        evaluate: (asset, accessLog) => {
-          if (!accessLog || accessLog.length === 0) {
-            return { shouldCache: false };
-          }
-
-          const uniqueStakeholders = new Set(accessLog.map(log => log.stakeholder));
-          const uniqueCount = uniqueStakeholders.size;
-
-          if (uniqueCount >= 3) {
-            return {
-              shouldCache: true,
-              ttl: 3600, // 1 hour
-              reason: `High collaboration asset (${uniqueCount} stakeholders)`,
-              priority: 'medium',
-              stakeholders: Array.from(uniqueStakeholders)
-            };
-          }
-          return { shouldCache: false };
-        }
+        name: 'Access Pattern Detection',
+        description: 'Pre-cache shipments accessed by multiple organizations (>3 accesses/hour)'
       },
       {
         id: 'Rule 3',
         name: 'High-Value Near Destination',
-        description: 'Pre-cache high-value assets (>$50k) within 50km of destination',
-        evaluate: (asset, accessLog) => {
-          const value = parseInt(asset.AppraisedValue) || 0;
-          const destDistance = asset.DestinationDistance || 9999;
-          
-          if (value > 50000 && destDistance < 50) {
-            return {
-              shouldCache: true,
-              ttl: 2700, // 45 minutes
-              reason: `High-value asset ($${(value / 1000).toFixed(0)}k) near destination (${destDistance}km)`,
-              priority: 'high',
-              stakeholders: ['retailer', 'distributor', 'customs', 'insurance']
-            };
-          }
-          return { shouldCache: false };
-        }
+        description: 'Pre-cache high-value shipments (>$50k) within 50km of destination'
       },
       {
         id: 'Rule 4',
-        name: 'Optimization Mode',
-        description: 'Pre-cache all transit assets during off-peak hours',
-        evaluate: (asset, accessLog) => {
-          const hour = new Date().getHours();
-          const isOffPeak = hour >= 22 || hour <= 6; // 10 PM to 6 AM
-          const isInTransit = asset.Status?.toLowerCase().includes('transit');
-
-          if (isOffPeak && isInTransit) {
-            return {
-              shouldCache: true,
-              ttl: 7200, // 2 hours
-              reason: 'Off-peak optimization pre-cache',
-              priority: 'low',
-              stakeholders: ['system']
-            };
-          }
-          return { shouldCache: false };
-        }
+        name: 'Counter-example (DO NOT Pre-cache)',
+        description: 'Explicitly skip pre-caching for mid-journey, normal-access shipments'
       }
     ];
   }
 
+  /**
+   * Evaluate all pre-caching rules for an asset
+   * @param {object} asset - Enriched asset with CheckpointDistance, DestinationDistance, Status, etc.
+   * @param {array} accessLog - Array of { stakeholder, timestamp } entries
+   * @returns {object} { shouldPreCache, triggeredRule, ruleName, ttl, reason, policyTag }
+   */
   evaluatePreCachingRules(asset, accessLog = []) {
-    // Evaluate all rules and return first match
-    for (const rule of this.rules) {
-      const result = rule.evaluate(asset, accessLog);
-      
-      if (result.shouldCache) {
-        return {
-          shouldPreCache: true,
-          triggeredRule: rule.id,
-          ruleName: rule.name,
-          ttl: result.ttl,
-          reason: result.reason,
-          priority: result.priority,
-          stakeholders: result.stakeholders
-        };
-      }
+    const now = Date.now();
+
+    // Extract asset properties
+    const checkpointDistance = asset.CheckpointDistance ?? 9999;
+    const destDistance = asset.DestinationDistance ?? 9999;
+    const value = parseInt(asset.AppraisedValue || '0', 10);
+    const status = (asset.Status || '').toLowerCase();
+    const owner = (asset.Owner || '').toLowerCase();
+
+    // Determine if in transit
+    const isInTransit = status.includes('transit') || owner.includes('transit');
+
+    // ETA calculation (if provided)
+    let etaMinutes = 9999;
+    if (asset.ETA) {
+      const etaTime = new Date(asset.ETA).getTime();
+      etaMinutes = Math.max(0, (etaTime - now) / 60000);
     }
 
+    // Access pattern analysis (last 1 hour)
+    const oneHourAgo = now - 60 * 60 * 1000;
+    const recentAccesses = accessLog.filter(log => log.timestamp >= oneHourAgo);
+    const recentCount = recentAccesses.length;
+    const uniqueOrgs = new Set(recentAccesses.map(log => log.stakeholder));
+    const uniqueOrgCount = uniqueOrgs.size;
+
+    // ------------------------
+    // RULE 4: DO NOT PRE-CACHE (evaluated first as negative rule)
+    // ------------------------
+    // Condition: middle of long journey, far from checkpoints, normal access pattern
+    const isFarFromCheckpoint = checkpointDistance > 200;
+    const isFarFromDestination = destDistance > 200;
+    const normalAccessPattern = recentCount <= 3;
+
+    if (isInTransit && isFarFromCheckpoint && isFarFromDestination && normalAccessPattern) {
+      return {
+        shouldPreCache: false,
+        triggeredRule: 'Rule 4',
+        ruleName: "DO NOT Pre-cache (Counter-example)",
+        ttl: 0,
+        reason: `Mid-journey (checkpoint: ${checkpointDistance}km, dest: ${destDistance}km), normal access (${recentCount} requests/hour). Pre-caching would waste bandwidth.`,
+        policyTag: 'IN_TRANSIT',
+        priority: 'N/A'
+      };
+    }
+
+    // ------------------------
+    // RULE 1: CHECKPOINT PROXIMITY
+    // ------------------------
+    // Condition: distance < 20km AND ETA < 1 hour AND checkpoint requires docs
+    const checkpointRequiresDocs =
+      owner.includes('customs') ||
+      owner.includes('checkpoint') ||
+      owner.includes('approaching');
+
+    if (isInTransit && checkpointDistance < 20 && etaMinutes < 60 && checkpointRequiresDocs) {
+      return {
+        shouldPreCache: true,
+        triggeredRule: 'Rule 1',
+        ruleName: 'Checkpoint Proximity',
+        ttl: 30 * 60, // 30 minutes
+        reason: `Shipment approaching checkpoint (${checkpointDistance}km away, ETA ${Math.round(etaMinutes)} min). Customs officer will need documents soon.`,
+        policyTag: 'IN_TRANSIT',
+        priority: checkpointDistance < 10 ? 'HIGH' : 'MEDIUM'
+      };
+    }
+
+    // ------------------------
+    // RULE 2: ACCESS PATTERN DETECTION
+    // ------------------------
+    // Condition: >3 accesses in last hour AND accessed by multiple organizations
+    if (recentCount > 3 && uniqueOrgCount >= 2) {
+      return {
+        shouldPreCache: true,
+        triggeredRule: 'Rule 2',
+        ruleName: 'Access Pattern Detection',
+        ttl: 24 * 60 * 60, // 24 hours (dispute scenario)
+        reason: `Unusual access pattern (${recentCount} requests from ${uniqueOrgCount} organizations in last hour). Likely dispute or investigation forming.`,
+        policyTag: 'DISPUTED',
+        priority: 'HIGH'
+      };
+    }
+
+    // ------------------------
+    // RULE 3: HIGH-VALUE NEAR DESTINATION
+    // ------------------------
+    // Condition: value > $50,000 AND distance to destination < 50km
+    if (value > 50000 && destDistance < 50) {
+      return {
+        shouldPreCache: true,
+        triggeredRule: 'Rule 3',
+        ruleName: 'High-Value Near Destination',
+        ttl: 45 * 60, // 45 minutes
+        reason: `High-value shipment ($${value.toLocaleString()}) within ${destDistance}km of destination. Pre-cache inspection documents for delivery.`,
+        policyTag: 'IN_TRANSIT',
+        priority: 'HIGH'
+      };
+    }
+
+    // ------------------------
+    // NO RULE MATCHED
+    // ------------------------
     return {
       shouldPreCache: false,
-      reason: 'No pre-caching rule triggered'
+      triggeredRule: null,
+      ruleName: null,
+      ttl: 0,
+      reason: 'No pre-caching rule conditions met.',
+      policyTag: null,
+      priority: 'N/A'
     };
   }
 
+  /**
+   * Get rule definitions for UI display
+   */
   getRules() {
-    return this.rules.map(rule => ({
-      id: rule.id,
-      name: rule.name,
-      description: rule.description
-    }));
+    return this.ruleDefinitions;
   }
 }
 
+// Export singleton instance
 const smartCache = new SmartCache();
 
 module.exports = smartCache;
