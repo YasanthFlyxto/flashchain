@@ -69,7 +69,7 @@ class AssetTransfer extends Contract {
         }
     }
 
-    // CreateAsset issues a new asset to the world state with given details.
+
     // CreateAsset issues a new asset to the world state with given details.
     async CreateAsset(ctx, id, color, size, owner, appraisedValue, status) {
         const exists = await this.AssetExists(ctx, id);

@@ -1,4 +1,4 @@
-# 🚀 FlashChain Quick Start Guide
+#  FlashChain Quick Start Guide
 
 ## Prerequisites
 - Ubuntu 22.04

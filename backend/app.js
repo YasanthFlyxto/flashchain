@@ -186,7 +186,7 @@ async function runBackgroundPrecacheWorker() {
     activities: [],
     inTransitCount: 0,
     disputedCount: 0,
-    alreadyCached: 0  // ← Add this counter
+    alreadyCached: 0 
   };
 
   try {
