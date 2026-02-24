@@ -83,6 +83,16 @@ function enrichAssetWithLocation(asset) {
   let eta = null;
   let checkpointRequiresDocs = false;
 
+  // Deterministic display metadata for all assets (derived from ID hash)
+  const ORIGINS      = ['Mumbai', 'Singapore', 'Shanghai', 'Dubai', 'Los Angeles', 'Hamburg'];
+  const DESTINATIONS = ['Rotterdam', 'Antwerp', 'New York', 'Sydney', 'London', 'Frankfurt'];
+  const CONSIGNEES   = ['Unilever Europe', 'IKEA Logistics', 'Pfizer Supply', 'Samsung Distribution', 'Amazon EU'];
+  const _hash = crypto.createHash('md5').update(asset.ID).digest('hex');
+  const _seed = parseInt(_hash.substring(0, 4), 16);
+  const origin      = ORIGINS[_seed % ORIGINS.length];
+  const destination = DESTINATIONS[(_seed * 3 + 1) % DESTINATIONS.length];
+  const consignee   = CONSIGNEES[(_seed * 7 + 2) % CONSIGNEES.length];
+
   if (isTestAsset) {
     // Controlled distances for test assets
     if (ownerLower.includes('approaching') || ownerLower.includes('checkpoint')) {
@@ -141,6 +151,9 @@ function enrichAssetWithLocation(asset) {
   return {
     ...asset,
     Status: status,
+    Origin: origin,
+    Destination: destination,
+    Consignee: consignee,
     CheckpointDistance: checkpointDistance,
     DestinationDistance: destinationDistance,
     NextCheckpoint: nextCheckpoint,

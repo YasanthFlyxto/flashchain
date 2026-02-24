@@ -137,5 +137,20 @@ export const api = {
   async resetRules() {
     const response = await axios.post(`${API_URL}/api/rules/reset`);
     return response.data;
+  },
+
+  // Map raw blockchain asset fields to SCM display terminology (UI only)
+  mapAsset(asset) {
+    return {
+      ...asset,
+      CargoType: asset.Color,
+      WeightKg:  asset.Size,
+      Custodian: asset.Owner,
+      ValueUSD:  asset.AppraisedValue,
+    };
+  },
+
+  mapAssets(assets) {
+    return assets.map(a => this.mapAsset(a));
   }
 };
