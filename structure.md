@@ -1,68 +1,38 @@
 ```
 └── 📁flashchain
     └── 📁backend
-        └── 📁benchmark
-            ├── benchmark-stakeholder.js
-            ├── benchmark.js
-            ├── test-stakeholders.js
         └── 📁config
             ├── connection-org1.json
-            ├── connection-org1.json.bak
         └── 📁middleware
             ├── cache.js
-        └── 📁routes
-            ├── testOrchestrator.js
         └── 📁wallet
             ├── admin.id
         ├── .gitignore
         ├── app.js
-        ├── benchmark-results.json
-        ├── compareBlockchainLoad.js
         ├── enrollAdmin.js
-        ├── loadTest.js
-        ├── loadTestComparison.js
-        ├── NOTES.md
         ├── package-lock.json
         ├── package.json
-        ├── QUICKSTART.md
-        ├── runBenchmarkStats.js
         ├── startup-flashchain.sh
         ├── stop-flashchain.sh
-        ├── testBlockchainLoad.js
-        ├── testDataStaleness.js
     └── 📁chaincode
         └── 📁lib
             ├── assetTransfer.js
-            ├── assetTransfer.js:Zone.Identifier
         ├── index.js
-        ├── index.js:Zone.Identifier
         ├── package.json
-        ├── package.json:Zone.Identifier
     └── 📁docker
         ├── docker-compose.yml
     └── 📁docs
         ├── requirements-status.md
     └── 📁frontend
         └── 📁app
-            └── 📁analytics
-                ├── page.js
-            └── 📁demo
-                ├── page.js
             └── 📁lib
                 ├── api.js
-            └── 📁test-lab
-                ├── page.jsx
             ├── favicon.ico
             ├── globals.css
             ├── layout.tsx
             ├── page.jsx
         └── 📁public
-            ├── file.svg
             ├── flashchain-logo.png
-            ├── globe.svg
-            ├── next.svg
-            ├── vercel.svg
-            ├── window.svg
         ├── .env.local
         ├── .gitignore
         ├── eslint.config.mjs
@@ -71,7 +41,7 @@
         ├── package-lock.json
         ├── package.json
         ├── postcss.config.mjs
-        ├── README.md
         ├── tsconfig.json
     └── .gitignore
+    └── structure.md
 ```

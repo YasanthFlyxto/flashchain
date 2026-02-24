@@ -1,6 +1,7 @@
 // app.js - Policy-Based Pre-Caching System
 
 const express = require('express');
+const cors = require('cors');
 const { Gateway, Wallets } = require('fabric-network');
 const path = require('path');
 const fs = require('fs');
@@ -9,9 +10,8 @@ const smartCache = require('./middleware/cache');
 const { PreCachingRulesEngine } = require('./middleware/cache');
 
 const app = express();
-app.use(express.json());
-const cors = require('cors');
 app.use(cors());
+app.use(express.json());
 
 let gateway, network, contract, wallet, ccp;
 
@@ -115,7 +115,7 @@ function enrichAssetWithLocation(asset) {
     NextCheckpoint: nextCheckpoint,
     ETA: eta,
     CheckpointRequiresDocs: checkpointRequiresDocs,
-    CreatedAt: new Date(Date.now() - Math.random() * 86400000).toISOString()
+    CreatedAt: new Date().toISOString()
   };
 }
 
@@ -294,7 +294,7 @@ async function runBackgroundPrecacheWorker() {
 
 // Start/stop worker control
 function startPreCachingWorker() {
-  console.log('[Worker] Background worker started (2-minute interval)');
+  console.log('[Worker] Background worker started (5-second interval)');
 
   // Run worker function with enabled check
   const workerTask = async () => {
@@ -396,7 +396,7 @@ app.get('/api/asset/:id', async (req, res) => {
 });
 
 // Get all assets
-app.get('/api/assets', async (req, res) => {
+app.get('/api/assets', async (_req, res) => {
   const startTime = Date.now();
 
   try {
@@ -415,8 +415,6 @@ app.get('/api/assets', async (req, res) => {
   }
 });
 
-// Create shipment
-// Create shipment
 // Create shipment
 app.post('/api/shipment/create', async (req, res) => {
   try {
@@ -493,12 +491,12 @@ app.delete('/api/asset/:id', async (req, res) => {
 });
 
 // Health check
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
 // Get statistics
-app.get('/api/stats', async (req, res) => {
+app.get('/api/stats', async (_req, res) => {
   try {
     const stats = smartCache.getStats();
     const totalQueries = stats.hits + stats.misses;
@@ -523,8 +521,8 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
-// Get pre-caching activity log - now reads from Redis
-app.get('/api/precache/activity', async (req, res) => {
+// Get pre-caching activity log - reads live from Redis
+app.get('/api/precache/activity', async (_req, res) => {
   try {
     // Get all cached asset keys from Redis using the new method
     const keys = await smartCache.getAllAssetKeys();
@@ -572,10 +570,8 @@ app.get('/api/precache/activity', async (req, res) => {
   }
 });
 
-
-
 // Reset statistics
-app.post('/api/stats/reset', async (req, res) => {
+app.post('/api/stats/reset', async (_req, res) => {
   smartCache.resetStats();
   await smartCache.flushAll();
   preCacheActivity = [];
@@ -637,10 +633,8 @@ app.get('/api/asset/:id/compare', async (req, res) => {
   }
 });
 
-
-
-// Get testlab assets with enrichment
-app.get('/api/testlab/assets', async (req, res) => {
+// Get testlab assets with enrichment and pre-caching evaluation
+app.get('/api/testlab/assets', async (_req, res) => {
   try {
     const result = await contract.evaluateTransaction('GetAllAssets');
     const allAssets = JSON.parse(result.toString());
@@ -686,7 +680,7 @@ app.get('/api/testlab/assets', async (req, res) => {
 });
 
 // System reset
-app.post('/api/system/reset', async (req, res) => {
+app.post('/api/system/reset', async (_req, res) => {
   try {
     await smartCache.flushAll();
     smartCache.resetStats();
@@ -706,7 +700,7 @@ app.post('/api/system/reset', async (req, res) => {
 });
 
 // Clear all test/benchmark assets from blockchain
-app.post('/api/system/clear-test-assets', async (req, res) => {
+app.post('/api/system/clear-test-assets', async (_req, res) => {
   try {
     const result = await contract.evaluateTransaction('GetAllAssets');
     const allAssets = JSON.parse(result.toString());
@@ -752,7 +746,7 @@ app.post('/api/system/clear-test-assets', async (req, res) => {
 });
 
 // Clear ALL assets (use with caution)
-app.post('/api/system/clear-all-assets', async (req, res) => {
+app.post('/api/system/clear-all-assets', async (_req, res) => {
   try {
     const result = await contract.evaluateTransaction('GetAllAssets');
     const allAssets = JSON.parse(result.toString());
@@ -802,7 +796,7 @@ app.post('/api/worker/toggle', (req, res) => {
   });
 });
 
-app.get('/api/worker/status', (req, res) => {
+app.get('/api/worker/status', (_req, res) => {
   res.json({
     success: true,
     workerEnabled,
@@ -810,10 +804,8 @@ app.get('/api/worker/status', (req, res) => {
   });
 });
 
-// Get asset counts
 // Get asset counts (hot vs cold)
-// Get asset counts (hot vs cold)
-app.get('/api/assets/count', async (req, res) => {
+app.get('/api/assets/count', async (_req, res) => {
   try {
     const result = await contract.evaluateTransaction('GetAllAssets');
     const assets = JSON.parse(result.toString());
@@ -851,8 +843,6 @@ app.get('/api/assets/count', async (req, res) => {
 
 
 
-
-
 // ========================================
 // START SERVER
 // ========================================
@@ -877,3 +867,15 @@ async function startServer() {
 }
 
 startServer();
+
+process.on('SIGINT', () => {
+  console.log('[Server] Shutting down gracefully...');
+  stopPreCachingWorker();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  console.log('[Server] Shutting down gracefully...');
+  stopPreCachingWorker();
+  process.exit(0);
+});
