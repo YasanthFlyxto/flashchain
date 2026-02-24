@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { api } from './lib/api';
 
 export default function PolicyDemoPage() {
   const [sessionState, setSessionState] = useState('idle');
@@ -42,13 +43,15 @@ export default function PolicyDemoPage() {
   const [creatingCustom, setCreatingCustom] = useState(false);
   const [customResult, setCustomResult] = useState(null);
 
-  const API_BASE = 'http://localhost:4000/api';
+  // Policy configuration
+  const [policyConfig, setPolicyConfig] = useState(null);
+  const [activePreset, setActivePreset] = useState('general-logistics');
+  const [applyingPreset, setApplyingPreset] = useState(false);
 
   // Fetch blockchain assets
   const fetchBlockchainAssets = async () => {
     try {
-      const resp = await fetch(`${API_BASE}/testlab/assets`);
-      const data = await resp.json();
+      const data = await api.getTestlabAssets();
       if (data.success) {
         setBlockchainAssets(data.assets || []);
       }
@@ -60,8 +63,7 @@ export default function PolicyDemoPage() {
   // Fetch cache contents
   const fetchCacheAssets = async () => {
     try {
-      const resp = await fetch(`${API_BASE}/precache/activity`);
-      const data = await resp.json();
+      const data = await api.getPreCacheActivity();
       if (data.success) {
         setCacheAssets(data.activity || []);
       }
@@ -73,8 +75,7 @@ export default function PolicyDemoPage() {
   // Fetch asset counts
   const fetchAssetCounts = async () => {
     try {
-      const resp = await fetch(`${API_BASE}/assets/count`);
-      const data = await resp.json();
+      const data = await api.getAssetCounts();
       if (data.success) {
         setAssetCounts({
           total: data.total,
@@ -101,8 +102,7 @@ export default function PolicyDemoPage() {
   // Fetch worker status
   const fetchWorkerStatus = async () => {
     try {
-      const resp = await fetch(`${API_BASE}/worker/status`);
-      const data = await resp.json();
+      const data = await api.getWorkerStatus();
       if (data.success) {
         setWorkerEnabled(data.workerEnabled);
       }
@@ -111,17 +111,55 @@ export default function PolicyDemoPage() {
     }
   };
 
+  // Fetch current rule configuration
+  const fetchRules = async () => {
+    try {
+      const data = await api.getRules();
+      if (data.success) {
+        setPolicyConfig(data.config);
+      }
+    } catch (err) {
+      console.error('Error fetching rules:', err);
+    }
+  };
+
+  // Apply an industry preset
+  const applyPreset = async (presetKey) => {
+    setApplyingPreset(true);
+    try {
+      const data = await api.applyRulePreset(presetKey);
+      if (data.success) {
+        setPolicyConfig(data.config);
+        setActivePreset(presetKey);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setApplyingPreset(false);
+    }
+  };
+
+  // Reset rules to system defaults
+  const resetRulesToDefaults = async () => {
+    setApplyingPreset(true);
+    try {
+      const data = await api.resetRules();
+      if (data.success) {
+        setPolicyConfig(data.config);
+        setActivePreset('general-logistics');
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setApplyingPreset(false);
+    }
+  };
+
   // Toggle worker
   const toggleWorker = async () => {
     try {
       const newState = !workerEnabled;
-      const resp = await fetch(`${API_BASE}/worker/toggle`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: newState })
-      });
-
-      const data = await resp.json();
+      const data = await api.toggleWorker(newState);
       if (data.success) {
         setWorkerEnabled(newState);
       }
@@ -134,6 +172,7 @@ export default function PolicyDemoPage() {
   useEffect(() => {
     refreshTables();
     fetchWorkerStatus();
+    fetchRules();
     const interval = setInterval(() => {
       refreshTables();
       fetchWorkerStatus();
@@ -149,7 +188,7 @@ export default function PolicyDemoPage() {
 
     try {
       setLoadingAssets(true);
-      await fetch(`${API_BASE}/system/clear-test-assets`, { method: 'POST' });
+      await api.clearTestAssets();
       alert('Blockchain cleared successfully');
       resetDemo();
       setBlockchainPage(1);
@@ -170,7 +209,7 @@ export default function PolicyDemoPage() {
 
     try {
       setLoadingAssets(true);
-      await fetch(`${API_BASE}/system/reset`, { method: 'POST' });
+      await api.resetSystem();
       alert('Cache cleared successfully');
       resetDemo();
       setBlockchainPage(1);
@@ -211,16 +250,12 @@ export default function PolicyDemoPage() {
 
         const value = isHighValue ? '75000' : '30000';
 
-        await fetch(`${API_BASE}/shipment/create`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            shipmentId: id,
-            color: 'BenchmarkProduct',
-            size: '100',
-            owner,
-            value
-          })
+        await api.createShipment({
+          shipmentId: id,
+          color: 'BenchmarkProduct',
+          size: '100',
+          owner,
+          value
         });
 
         createdAssets.push({ id, expected: 'hot', type: 'transit', owner, value });
@@ -235,16 +270,12 @@ export default function PolicyDemoPage() {
       for (let i = 0; i < disputedCount; i++) {
         const id = `BENCH_DISPUTED_${timestamp}_${i}`;
 
-        await fetch(`${API_BASE}/shipment/create`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            shipmentId: id,
-            color: 'BenchmarkProduct',
-            size: '100',
-            owner: 'Customs-Disputed-QualityIssue',
-            value: '65000'
-          })
+        await api.createShipment({
+          shipmentId: id,
+          color: 'BenchmarkProduct',
+          size: '100',
+          owner: 'Customs-Disputed-QualityIssue',
+          value: '65000'
         });
 
         createdAssets.push({ id, expected: 'hot', type: 'disputed', owner: 'Customs-Disputed-QualityIssue', value: '65000' });
@@ -260,16 +291,12 @@ export default function PolicyDemoPage() {
             ? 'Warehouse-Final-Delivered'
             : 'RetailStore-Delivered';
 
-        await fetch(`${API_BASE}/shipment/create`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            shipmentId: id,
-            color: 'BenchmarkProduct',
-            size: '100',
-            owner,
-            value: '15000'
-          })
+        await api.createShipment({
+          shipmentId: id,
+          color: 'BenchmarkProduct',
+          size: '100',
+          owner,
+          value: '15000'
         });
 
         createdAssets.push({ id, expected: 'cold', type: 'delivered', owner, value: '15000' });
@@ -304,11 +331,7 @@ export default function PolicyDemoPage() {
     try {
       console.log('Triggering background worker...');
 
-      const resp = await fetch(`${API_BASE}/precache/run-worker-once`, {
-        method: 'POST'
-      });
-
-      const data = await resp.json();
+      const data = await api.runWorkerOnce();
 
       if (!data.success) {
         throw new Error(data.error || 'Worker failed');
@@ -334,15 +357,13 @@ export default function PolicyDemoPage() {
     try {
       console.log('Running benchmark queries...');
 
-      const countResp = await fetch(`${API_BASE}/assets/count`);
-      const countData = await countResp.json();
+      const countData = await api.getAssetCounts();
 
       if (!countData.success || countData.hot === 0) {
         throw new Error('No hot assets found. Create test shipments first.');
       }
 
-      const assetsResp = await fetch(`${API_BASE}/testlab/assets`);
-      const assetsData = await assetsResp.json();
+      const assetsData = await api.getTestlabAssets();
 
       const hotAssets = assetsData.assets.filter(a =>
         a.Status === 'In-Transit' || a.Status === 'DISPUTED'
@@ -354,8 +375,7 @@ export default function PolicyDemoPage() {
       let cacheMisses = 0;
 
       for (const asset of hotAssets) {
-        const compareResp = await fetch(`${API_BASE}/asset/${asset.ID}/compare`);
-        const compareData = await compareResp.json();
+        const compareData = await api.compareLatency(asset.ID);
 
         const cacheLatency = compareData.comparison?.cached?.latency || 0;
         const bcLatency = compareData.comparison?.blockchain?.latency || 0;
@@ -415,8 +435,7 @@ export default function PolicyDemoPage() {
     setError(null);
 
     try {
-      const assetsResp = await fetch(`${API_BASE}/testlab/assets`);
-      const assetsData = await assetsResp.json();
+      const assetsData = await api.getTestlabAssets();
 
       const hotAssets = assetsData.assets.filter(a =>
         a.Status === 'In-Transit' || a.Status === 'DISPUTED'
@@ -431,8 +450,7 @@ export default function PolicyDemoPage() {
 
       console.log(`Querying asset: ${assetId}`);
 
-      const compareResp = await fetch(`${API_BASE}/asset/${assetId}/compare`);
-      const compareData = await compareResp.json();
+      const compareData = await api.compareLatency(assetId);
 
       const cacheLatency = compareData.comparison?.cached?.latency || 0;
       const bcLatency = compareData.comparison?.blockchain?.latency || 0;
@@ -495,16 +513,12 @@ export default function PolicyDemoPage() {
         }
       }
 
-      await fetch(`${API_BASE}/shipment/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          shipmentId: id,
-          color: 'CustomProduct',
-          size: '100',
-          owner,
-          value: customShipment.value
-        })
+      await api.createShipment({
+        shipmentId: id,
+        color: 'CustomProduct',
+        size: '100',
+        owner,
+        value: customShipment.value
       });
 
       const isHot = customShipment.status === 'transit' || customShipment.status === 'disputed';
@@ -668,6 +682,154 @@ export default function PolicyDemoPage() {
             <div className="text-4xl font-bold text-blue-700">{cacheAssets.length}</div>
             <div className="text-xs text-blue-600 mt-1">In Redis</div>
           </div>
+        </div>
+
+        {/* Policy Engine Configuration */}
+        <div className="bg-white shadow-sm rounded-2xl p-6 mb-6 border border-slate-200">
+          <div className="mb-5">
+            <h2 className="text-2xl font-bold text-slate-900">Policy Engine Configuration</h2>
+            <p className="text-slate-500 text-sm mt-1">
+              Supply chain managers configure caching thresholds for their specific industry and operations.
+              Different industries have different proximity windows, compliance requirements, and cargo values.
+            </p>
+          </div>
+
+          {/* Industry preset selector */}
+          <div className="flex flex-wrap gap-3 mb-6">
+            <button
+              onClick={() => applyPreset('general-logistics')}
+              disabled={applyingPreset}
+              className={`px-4 py-2 rounded-xl font-semibold text-sm transition-all border-2 disabled:opacity-50 ${
+                activePreset === 'general-logistics'
+                  ? 'bg-slate-700 text-white border-slate-700 shadow'
+                  : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              General Logistics
+            </button>
+            <button
+              onClick={() => applyPreset('pharmaceutical')}
+              disabled={applyingPreset}
+              className={`px-4 py-2 rounded-xl font-semibold text-sm transition-all border-2 disabled:opacity-50 ${
+                activePreset === 'pharmaceutical'
+                  ? 'bg-purple-700 text-white border-purple-700 shadow'
+                  : 'bg-white border-purple-300 text-purple-700 hover:bg-purple-50'
+              }`}
+            >
+              Pharmaceutical
+            </button>
+            <button
+              onClick={() => applyPreset('food-beverage')}
+              disabled={applyingPreset}
+              className={`px-4 py-2 rounded-xl font-semibold text-sm transition-all border-2 disabled:opacity-50 ${
+                activePreset === 'food-beverage'
+                  ? 'bg-orange-600 text-white border-orange-600 shadow'
+                  : 'bg-white border-orange-300 text-orange-700 hover:bg-orange-50'
+              }`}
+            >
+              Food & Beverage
+            </button>
+            <button
+              onClick={resetRulesToDefaults}
+              disabled={applyingPreset}
+              className="ml-auto px-4 py-2 rounded-xl font-semibold text-sm bg-white border-2 border-slate-200 text-slate-600 hover:bg-slate-50 transition-all disabled:opacity-50"
+            >
+              {applyingPreset ? 'Applying...' : 'Reset to Defaults'}
+            </button>
+          </div>
+
+          {/* Live rule parameters */}
+          {policyConfig && (
+            <div className="grid grid-cols-4 gap-4">
+              {/* Rule 1 */}
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="bg-blue-200 text-blue-800 px-2 py-0.5 rounded text-xs font-bold">Rule 1</span>
+                  <span className="font-semibold text-blue-900 text-sm">Checkpoint Proximity</span>
+                </div>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-blue-700">Distance</span>
+                    <span className="font-mono font-bold text-blue-900">&lt;{policyConfig.rule1.checkpointDistanceKm} km</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-blue-700">ETA window</span>
+                    <span className="font-mono font-bold text-blue-900">&lt;{policyConfig.rule1.etaMinutes} min</span>
+                  </div>
+                  <div className="flex justify-between border-t border-blue-200 pt-2 mt-2">
+                    <span className="text-blue-700">Cache TTL</span>
+                    <span className="font-mono font-bold text-blue-900">{policyConfig.rule1.ttlMinutes} min</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Rule 2 */}
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="bg-amber-200 text-amber-800 px-2 py-0.5 rounded text-xs font-bold">Rule 2</span>
+                  <span className="font-semibold text-amber-900 text-sm">Multi-Stakeholder Access</span>
+                </div>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-amber-700">Access count</span>
+                    <span className="font-mono font-bold text-amber-900">&gt;{policyConfig.rule2.accessCountThreshold} req/{policyConfig.rule2.windowHours}h</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-amber-700">Min organisations</span>
+                    <span className="font-mono font-bold text-amber-900">≥{policyConfig.rule2.minOrganizations}</span>
+                  </div>
+                  <div className="flex justify-between border-t border-amber-200 pt-2 mt-2">
+                    <span className="text-amber-700">Cache TTL</span>
+                    <span className="font-mono font-bold text-amber-900">{policyConfig.rule2.ttlHours}h</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Rule 3 */}
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="bg-emerald-200 text-emerald-800 px-2 py-0.5 rounded text-xs font-bold">Rule 3</span>
+                  <span className="font-semibold text-emerald-900 text-sm">High-Value Near Destination</span>
+                </div>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-emerald-700">Value threshold</span>
+                    <span className="font-mono font-bold text-emerald-900">&gt;${policyConfig.rule3.valueThresholdUsd.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-emerald-700">Distance</span>
+                    <span className="font-mono font-bold text-emerald-900">&lt;{policyConfig.rule3.destDistanceKm} km</span>
+                  </div>
+                  <div className="flex justify-between border-t border-emerald-200 pt-2 mt-2">
+                    <span className="text-emerald-700">Cache TTL</span>
+                    <span className="font-mono font-bold text-emerald-900">{policyConfig.rule3.ttlMinutes} min</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Rule 4 */}
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="bg-red-200 text-red-800 px-2 py-0.5 rounded text-xs font-bold">Rule 4</span>
+                  <span className="font-semibold text-red-900 text-sm">Mid-Journey Exclusion</span>
+                </div>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-red-700">Checkpoint dist</span>
+                    <span className="font-mono font-bold text-red-900">&gt;{policyConfig.rule4.minCheckpointDistanceKm} km</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-red-700">Destination dist</span>
+                    <span className="font-mono font-bold text-red-900">&gt;{policyConfig.rule4.minDestDistanceKm} km</span>
+                  </div>
+                  <div className="flex justify-between border-t border-red-200 pt-2 mt-2">
+                    <span className="text-red-700">Action</span>
+                    <span className="font-mono font-bold text-red-900">DO NOT cache</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Single Asset Query Benchmark */}

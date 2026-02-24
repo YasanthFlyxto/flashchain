@@ -113,5 +113,29 @@ export const api = {
   async healthCheck() {
     const response = await axios.get(`${API_URL}/health`);
     return response.data;
+  },
+
+  // Get current rule configuration and available industry presets
+  async getRules() {
+    const response = await axios.get(`${API_URL}/api/rules`);
+    return response.data;
+  },
+
+  // Apply a named industry preset (e.g. 'pharmaceutical', 'food-beverage', 'general-logistics')
+  async applyRulePreset(preset) {
+    const response = await axios.post(`${API_URL}/api/rules`, { preset });
+    return response.data;
+  },
+
+  // Apply a custom rule configuration object
+  async updateRules(config) {
+    const response = await axios.post(`${API_URL}/api/rules`, { config });
+    return response.data;
+  },
+
+  // Reset all rules to system defaults
+  async resetRules() {
+    const response = await axios.post(`${API_URL}/api/rules/reset`);
+    return response.data;
   }
 };

@@ -9,6 +9,37 @@ const crypto = require('crypto');
 const smartCache = require('./middleware/cache');
 const { PreCachingRulesEngine } = require('./middleware/cache');
 
+// ========================================
+// INDUSTRY PRESETS
+// ========================================
+
+const INDUSTRY_PRESETS = {
+  'general-logistics': {
+    label: 'General Logistics',
+    description: 'Standard logistics operations — balanced thresholds for most supply chains',
+    rule1: { checkpointDistanceKm: 20, etaMinutes: 60, ttlMinutes: 30 },
+    rule2: { accessCountThreshold: 3, minOrganizations: 2, windowHours: 1, ttlHours: 24 },
+    rule3: { valueThresholdUsd: 50000, destDistanceKm: 50, ttlMinutes: 45 },
+    rule4: { minCheckpointDistanceKm: 200, minDestDistanceKm: 200, maxNormalAccesses: 3 }
+  },
+  'pharmaceutical': {
+    label: 'Pharmaceutical',
+    description: 'Temperature-sensitive, high-compliance cargo — wider proximity windows, stricter access detection',
+    rule1: { checkpointDistanceKm: 30, etaMinutes: 90, ttlMinutes: 60 },
+    rule2: { accessCountThreshold: 2, minOrganizations: 2, windowHours: 1, ttlHours: 48 },
+    rule3: { valueThresholdUsd: 10000, destDistanceKm: 100, ttlMinutes: 60 },
+    rule4: { minCheckpointDistanceKm: 300, minDestDistanceKm: 300, maxNormalAccesses: 2 }
+  },
+  'food-beverage': {
+    label: 'Food & Beverage',
+    description: 'Perishable goods — tight time windows, aggressive caching for freshness compliance',
+    rule1: { checkpointDistanceKm: 10, etaMinutes: 30, ttlMinutes: 15 },
+    rule2: { accessCountThreshold: 5, minOrganizations: 3, windowHours: 1, ttlHours: 12 },
+    rule3: { valueThresholdUsd: 100000, destDistanceKm: 30, ttlMinutes: 30 },
+    rule4: { minCheckpointDistanceKm: 150, minDestDistanceKm: 150, maxNormalAccesses: 4 }
+  }
+};
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -801,6 +832,61 @@ app.get('/api/worker/status', (_req, res) => {
     success: true,
     workerEnabled,
     uptime: Math.floor(process.uptime())
+  });
+});
+
+// ========================================
+// RULES CONFIGURATION ENDPOINTS
+// ========================================
+
+// Get current rule configuration and available presets
+app.get('/api/rules', (_req, res) => {
+  res.json({
+    success: true,
+    config: preCacheRules.getConfig(),
+    presets: INDUSTRY_PRESETS
+  });
+});
+
+// Apply an industry preset or a custom config
+app.post('/api/rules', (req, res) => {
+  const { preset, config } = req.body;
+
+  if (preset) {
+    const presetData = INDUSTRY_PRESETS[preset];
+    if (!presetData) {
+      return res.status(400).json({
+        success: false,
+        error: `Unknown preset '${preset}'. Available: ${Object.keys(INDUSTRY_PRESETS).join(', ')}`
+      });
+    }
+    preCacheRules.updateConfig(presetData);
+    return res.json({
+      success: true,
+      message: `Applied '${presetData.label}' preset`,
+      config: preCacheRules.getConfig()
+    });
+  }
+
+  if (config) {
+    preCacheRules.updateConfig(config);
+    return res.json({
+      success: true,
+      message: 'Rule configuration updated',
+      config: preCacheRules.getConfig()
+    });
+  }
+
+  return res.status(400).json({ success: false, error: 'Provide a preset name or a config object' });
+});
+
+// Reset rules to system defaults
+app.post('/api/rules/reset', (_req, res) => {
+  preCacheRules.resetConfig();
+  res.json({
+    success: true,
+    message: 'Rules reset to General Logistics defaults',
+    config: preCacheRules.getConfig()
   });
 });
 
