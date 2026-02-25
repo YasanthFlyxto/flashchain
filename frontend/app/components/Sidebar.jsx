@@ -16,7 +16,7 @@ const NAV_ITEMS = [
   { href: '/shipments',  label: 'Shipments',          icon: Package },
   { href: '/cache',      label: 'Cache Intelligence', icon: Database },
   { href: '/policy',     label: 'Policy Studio',      icon: Settings2 },
-  { href: '/analytics',  label: 'Analytics',          icon: BarChart3 },
+  { href: '/analytics',  label: 'Benchmark',          icon: BarChart3 },
 ];
 
 export default function Sidebar() {

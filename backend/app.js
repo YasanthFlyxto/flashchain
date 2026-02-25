@@ -965,6 +965,74 @@ async function startServer() {
   }
 }
 
+// ========================================
+// BENCHMARK ENDPOINT
+// ========================================
+
+// Fires N concurrent queries to both blockchain and Redis cache, returns real latency stats.
+// Used by the Benchmark page to show how response time degrades under concurrent load.
+app.post('/api/benchmark/run', async (req, res) => {
+  const { concurrency = 10 } = req.body;
+  try {
+    // Pick first available asset
+    const allResult = await contract.evaluateTransaction('GetAllAssets');
+    const assets = JSON.parse(allResult.toString());
+    if (assets.length === 0) {
+      return res.status(400).json({ success: false, error: 'No assets on ledger. Register shipments first.' });
+    }
+    const assetId = assets[0].ID;
+    const cacheKey = `asset:${assetId}`;
+
+    // Warm the cache so cache hits are guaranteed
+    const rawData = JSON.parse((await contract.evaluateTransaction('ReadAsset', assetId)).toString());
+    await smartCache.cacheWithContext(cacheKey, rawData, {
+      preCached: true, ttl: 3600, triggeredRule: 0,
+      ruleName: 'Benchmark', reason: 'Benchmark warm-up', priority: 'HIGH'
+    });
+
+    // Fire N truly concurrent blockchain reads so the graph shows real peer contention
+    // growing with load. gRPC multiplexes over a small connection pool so this is safe.
+    const blockchainLatencies = await Promise.all(
+      Array.from({ length: concurrency }, async () => {
+        const t = performance.now();
+        await contract.evaluateTransaction('ReadAsset', assetId);
+        return parseFloat((performance.now() - t).toFixed(2));
+      })
+    );
+
+    // Fire N concurrent cache reads (Redis is fast enough for full concurrency)
+    const cacheLatencies = await Promise.all(
+      Array.from({ length: concurrency }, async () => {
+        const t = performance.now();
+        await smartCache.get(cacheKey);
+        return parseFloat((performance.now() - t).toFixed(2));
+      })
+    );
+
+    const calcStats = (arr) => {
+      const sorted = [...arr].sort((a, b) => a - b);
+      const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
+      return {
+        avg: parseFloat(avg.toFixed(2)),
+        p95: parseFloat((sorted[Math.floor(sorted.length * 0.95)] ?? sorted[sorted.length - 1]).toFixed(2)),
+        p99: parseFloat((sorted[Math.floor(sorted.length * 0.99)] ?? sorted[sorted.length - 1]).toFixed(2)),
+        min: parseFloat(sorted[0].toFixed(2)),
+        max: parseFloat(sorted[sorted.length - 1].toFixed(2)),
+      };
+    };
+
+    res.json({
+      success: true,
+      concurrency,
+      assetId,
+      blockchain: calcStats(blockchainLatencies),
+      cache: calcStats(cacheLatencies),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 startServer();
 
 process.on('SIGINT', () => {
