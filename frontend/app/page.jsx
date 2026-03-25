@@ -17,7 +17,7 @@ function formatValue(v) {
 }
 
 function timeAgo(isoString) {
-  if (!isoString) return '—';
+  if (!isoString) return '-';
   const diff = Math.floor((Date.now() - new Date(isoString).getTime()) / 1000);
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
@@ -69,7 +69,7 @@ export default function Dashboard() {
   const activeShipments = mapped.filter(a => a.Status === 'In-Transit' || a.Status === 'DISPUTED');
   const disputedCount = mapped.filter(a => a.Status === 'DISPUTED').length;
   const preCachedCount = mapped.filter(a => a.cachedStatus?.isPreCached).length;
-  const hitRate = stats?.cacheHitRate ?? '—';
+  const hitRate = stats?.cacheHitRate ?? '-';
   const recent = activeShipments.slice(0, 10);
 
   return (
@@ -172,9 +172,9 @@ export default function Dashboard() {
                       <td className="px-4 py-3 font-mono text-xs text-gray-700 font-medium">
                         {a.ID.length > 14 ? a.ID.slice(0, 14) + '…' : a.ID}
                       </td>
-                      <td className="px-4 py-3 text-gray-700">{a.CargoType || '—'}</td>
+                      <td className="px-4 py-3 text-gray-700">{a.CargoType || '-'}</td>
                       <td className="px-4 py-3 text-gray-500 text-xs">
-                        {a.Origin && a.Destination ? `${a.Origin} → ${a.Destination}` : '—'}
+                        {a.Origin && a.Destination ? `${a.Origin} → ${a.Destination}` : '-'}
                       </td>
                       <td className="px-4 py-3 text-gray-700 font-medium">{formatValue(a.AppraisedValue)}</td>
                       <td className="px-4 py-3"><StatusBadge status={a.Status} /></td>
@@ -213,16 +213,16 @@ export default function Dashboard() {
                     <div className="flex items-center gap-1.5 min-w-0">
                       <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 flex-shrink-0 mt-1.5" />
                       <span className="font-mono text-xs text-gray-700 truncate font-medium">
-                        {ev.assetId?.slice(0, 14) || '—'}
+                        {ev.assetId?.slice(0, 14) || '-'}
                       </span>
                     </div>
                     <span className={`text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0 ${
                       ev.priority === 'HIGH'   ? 'bg-red-100 text-red-600' :
                       ev.priority === 'MEDIUM' ? 'bg-amber-100 text-amber-600' :
                                                  'bg-gray-100 text-gray-500'
-                    }`}>{ev.priority || '—'}</span>
+                    }`}>{ev.priority || '-'}</span>
                   </div>
-                  <p className="text-xs text-gray-500 mt-0.5 ml-3.5 truncate">{ev.ruleName || ev.rule || '—'}</p>
+                  <p className="text-xs text-gray-500 mt-0.5 ml-3.5 truncate">{ev.ruleName || ev.rule || '-'}</p>
                   <p className="text-xs text-gray-400 mt-0.5 ml-3.5">{timeAgo(ev.timestamp)}</p>
                 </div>
               ))

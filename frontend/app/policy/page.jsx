@@ -58,7 +58,7 @@ function generateDescription(config) {
   const { rule1, rule2, rule3, rule4 } = config;
   return [
     {
-      rule: 'Rule 1 — Checkpoint Proximity',
+      rule: 'Rule 1 - Checkpoint Proximity',
       text: `Pre-cache any in-transit shipment that is within ${rule1.checkpointDistanceKm} km of a ` +
             `customs checkpoint and has an ETA of under ${rule1.etaMinutes} minutes. ` +
             `Cached data will remain valid for ${rule1.ttlMinutes} minutes, ensuring that border agents ` +
@@ -66,7 +66,7 @@ function generateDescription(config) {
       colour: 'blue',
     },
     {
-      rule: 'Rule 2 — Multi-Stakeholder Access',
+      rule: 'Rule 2 - Multi-Stakeholder Access',
       text: `When ${rule2.accessCountThreshold} or more distinct stakeholders from at least ` +
             `${rule2.minOrganizations} organisations query the same shipment within a ${rule2.windowHours}-hour ` +
             `window, the system treats this as a dispute or coordinated audit event. The shipment is ` +
@@ -74,7 +74,7 @@ function generateDescription(config) {
       colour: 'purple',
     },
     {
-      rule: 'Rule 3 — High-Value Near Destination',
+      rule: 'Rule 3 - High-Value Near Destination',
       text: `Shipments valued above $${rule3.valueThresholdUsd.toLocaleString()} that are within ` +
             `${rule3.destDistanceKm} km of their final delivery point will be pre-cached for ` +
             `${rule3.ttlMinutes} minutes. This protects last-mile verification workflows for ` +
@@ -82,7 +82,7 @@ function generateDescription(config) {
       colour: 'green',
     },
     {
-      rule: 'Rule 4 — Mid-Journey Exclusion (Guard)',
+      rule: 'Rule 4 - Mid-Journey Exclusion (Guard)',
       text: `Shipments more than ${rule4.minCheckpointDistanceKm} km from their next checkpoint AND ` +
             `more than ${rule4.minDestDistanceKm} km from their destination will NOT be pre-cached, ` +
             `even if other rules partially match. This prevents cache pollution for cargo in the middle ` +
@@ -114,7 +114,7 @@ const PRESET_CARDS = [
   {
     key: 'food-beverage',
     label: 'Food & Beverage',
-    desc: 'Perishable goods — tight time windows',
+    desc: 'Perishable goods - tight time windows',
     icon: Truck,
     colour: 'border-green-200 bg-green-50',
     activeBorder: 'border-green-500',
@@ -232,7 +232,7 @@ export default function PolicyStudioPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Policy Studio</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Configure pre-caching rules — changes apply to the live FlashChain engine</p>
+          <p className="text-sm text-gray-500 mt-0.5">Configure pre-caching rules - changes apply to the live FlashChain engine</p>
         </div>
         <Settings2 size={22} className="text-gray-400" />
       </div>

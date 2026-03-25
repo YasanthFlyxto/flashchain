@@ -10,9 +10,9 @@ const CARGO_TYPES = ['Electronics', 'Pharmaceuticals', 'Cold Chain', 'Industrial
 const CUSTODIAN_OPTIONS = [
   { label: 'Manufacturer',           value: 'Manufacturer',                  status: 'Delivered'  },
   { label: 'Carrier (In-Transit)',   value: 'Carrier-Transit',               status: 'In-Transit' },
-  { label: 'Customs — Rotterdam',    value: 'Customs-Rotterdam-Transit',     status: 'In-Transit' },
-  { label: 'Customs — Antwerp',      value: 'Customs-Antwerp-Transit',       status: 'In-Transit' },
-  { label: 'Customs — Hamburg',      value: 'Customs-Hamburg-Transit',       status: 'In-Transit' },
+  { label: 'Customs - Rotterdam',    value: 'Customs-Rotterdam-Transit',     status: 'In-Transit' },
+  { label: 'Customs - Antwerp',      value: 'Customs-Antwerp-Transit',       status: 'In-Transit' },
+  { label: 'Customs - Hamburg',      value: 'Customs-Hamburg-Transit',       status: 'In-Transit' },
   { label: 'Retailer',               value: 'Retailer',                      status: 'Delivered'  },
   { label: 'Warehouse',              value: 'Warehouse',                     status: 'Delivered'  },
   { label: 'Under Dispute',          value: 'Disputed',                      status: 'DISPUTED'   },
@@ -20,7 +20,7 @@ const CUSTODIAN_OPTIONS = [
 
 function formatValue(v) {
   const num = parseFloat(v);
-  if (isNaN(num)) return '—';
+  if (isNaN(num)) return '-';
   return `$${num.toLocaleString()}`;
 }
 
@@ -190,13 +190,13 @@ export default function ShipmentsPage() {
                       <td className="px-3 py-3 font-mono text-xs font-medium text-gray-700 whitespace-nowrap">
                         {a.ID.length > 16 ? a.ID.slice(0, 16) + '…' : a.ID}
                       </td>
-                      <td className="px-3 py-3 text-gray-700 whitespace-nowrap">{a.CargoType || '—'}</td>
+                      <td className="px-3 py-3 text-gray-700 whitespace-nowrap">{a.CargoType || '-'}</td>
                       <td className="px-3 py-3 text-gray-500 text-xs whitespace-nowrap">
-                        {a.Origin && a.Destination ? `${a.Origin} → ${a.Destination}` : '—'}
+                        {a.Origin && a.Destination ? `${a.Origin} → ${a.Destination}` : '-'}
                       </td>
-                      <td className="px-3 py-3 text-gray-600 whitespace-nowrap">{a.WeightKg ? `${a.WeightKg} kg` : '—'}</td>
+                      <td className="px-3 py-3 text-gray-600 whitespace-nowrap">{a.WeightKg ? `${a.WeightKg} kg` : '-'}</td>
                       <td className="px-3 py-3 font-medium text-gray-700 whitespace-nowrap">{formatValue(a.AppraisedValue)}</td>
-                      <td className="px-3 py-3 text-gray-600 text-xs whitespace-nowrap max-w-28 truncate">{a.Custodian || '—'}</td>
+                      <td className="px-3 py-3 text-gray-600 text-xs whitespace-nowrap max-w-28 truncate">{a.Custodian || '-'}</td>
                       <td className="px-3 py-3"><StatusBadge status={a.Status} /></td>
                       <td className="px-3 py-3">
                         <button
@@ -285,7 +285,7 @@ export default function ShipmentsPage() {
                 </select>
                 <p className="text-xs text-gray-400 mt-1">
                   Status: <span className="font-medium text-gray-600">
-                    {CUSTODIAN_OPTIONS.find(o => o.value === createForm.custodian)?.status || '—'}
+                    {CUSTODIAN_OPTIONS.find(o => o.value === createForm.custodian)?.status || '-'}
                   </span>
                 </p>
               </div>

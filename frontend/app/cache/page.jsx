@@ -8,7 +8,7 @@ import {
 import { Database, Zap, Clock, RefreshCw, Play, Pause } from 'lucide-react';
 
 function timeAgo(isoString) {
-  if (!isoString) return '—';
+  if (!isoString) return '-';
   const diff = Math.floor((Date.now() - new Date(isoString).getTime()) / 1000);
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
@@ -20,7 +20,7 @@ function PriorityBadge({ priority }) {
               priority === 'MEDIUM' ? 'bg-amber-100 text-amber-700 border-amber-200' :
                                       'bg-gray-100 text-gray-500 border-gray-200';
   return (
-    <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${cls}`}>{priority || '—'}</span>
+    <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${cls}`}>{priority || '-'}</span>
   );
 }
 
@@ -145,7 +145,7 @@ export default function CacheIntelligencePage() {
             <div>
               <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Cache Hit Rate</p>
               <p className="text-2xl font-bold text-gray-900">
-                {hitRate != null ? (typeof hitRate === 'number' ? `${hitRate.toFixed(1)}%` : hitRate) : '—'}
+                {hitRate != null ? (typeof hitRate === 'number' ? `${hitRate.toFixed(1)}%` : hitRate) : '-'}
               </p>
               <p className="text-xs text-gray-400">{stats?.cacheHits ?? 0} hits · {stats?.cacheMisses ?? 0} misses</p>
             </div>
@@ -182,7 +182,7 @@ export default function CacheIntelligencePage() {
         {/* Latency Comparison Chart */}
         <div className="col-span-3 bg-white border border-gray-200 rounded-xl p-5">
           <h2 className="font-semibold text-gray-900 mb-1">Latency Comparison</h2>
-          <p className="text-xs text-gray-400 mb-4">Cache (Redis) vs Blockchain per shipment — live measurements</p>
+          <p className="text-xs text-gray-400 mb-4">Cache (Redis) vs Blockchain per shipment - live measurements</p>
           {comparisonData.length === 0 ? (
             <div className="h-56 flex items-center justify-center text-gray-400 text-sm">
               {loading ? 'Building comparison…' : 'No cached shipments to compare. Run the worker first.'}
@@ -219,9 +219,9 @@ export default function CacheIntelligencePage() {
                     <PriorityBadge priority={a.cachedStatus?.priority} />
                   </div>
                   <div className="flex items-center gap-3 mt-1">
-                    <span className="text-xs text-gray-500">{a.triggeredRule || '—'}</span>
+                    <span className="text-xs text-gray-500">{a.triggeredRule || '-'}</span>
                     <span className="text-xs text-cyan-600 font-medium">
-                      {a.cachedStatus?.age != null ? `${Math.round(a.cachedStatus.age)}s old` : '—'}
+                      {a.cachedStatus?.age != null ? `${Math.round(a.cachedStatus.age)}s old` : '-'}
                     </span>
                   </div>
                 </div>
@@ -260,16 +260,16 @@ export default function CacheIntelligencePage() {
                     <tr key={i} className="hover:bg-gray-50">
                       <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{timeAgo(ev.timestamp)}</td>
                       <td className="px-4 py-3 font-mono text-xs text-gray-700 whitespace-nowrap">
-                        {ev.assetId?.slice(0, 16) || '—'}
+                        {ev.assetId?.slice(0, 16) || '-'}
                       </td>
                       <td className="px-4 py-3 text-gray-600 text-xs whitespace-nowrap">
-                        {asset?.Color || '—'}
+                        {asset?.Color || '-'}
                       </td>
-                      <td className="px-4 py-3 text-xs text-gray-700 whitespace-nowrap">{ev.ruleName || ev.rule || '—'}</td>
-                      <td className="px-4 py-3 text-xs text-gray-500 max-w-48 truncate">{ev.reason || '—'}</td>
+                      <td className="px-4 py-3 text-xs text-gray-700 whitespace-nowrap">{ev.ruleName || ev.rule || '-'}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500 max-w-48 truncate">{ev.reason || '-'}</td>
                       <td className="px-4 py-3 whitespace-nowrap"><PriorityBadge priority={ev.priority} /></td>
                       <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
-                        {ev.ttl ? `${Math.round(ev.ttl / 60)}min` : '—'}
+                        {ev.ttl ? `${Math.round(ev.ttl / 60)}min` : '-'}
                       </td>
                     </tr>
                   );

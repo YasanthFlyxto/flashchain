@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
@@ -8,7 +9,6 @@ import {
   Database,
   Settings2,
   BarChart3,
-  Zap
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -30,10 +30,10 @@ export default function Sidebar() {
       {/* Logo */}
       <div className="px-6 py-5 border-b border-white/10">
         <div className="flex items-center gap-2">
-          <Zap size={22} className="text-cyan-400" />
-          <span className="text-white font-semibold text-lg tracking-tight">FlashChain</span>
+          <Image src="/flashchain-logo.png" alt="FlashChain" width={120} height={32} className="rounded" />
+          {/* <span className="text-white font-semibold text-lg tracking-tight">FlashChain</span> */}
         </div>
-        <p className="text-white/40 text-xs mt-1">Supply Chain Manager</p>
+        {/* <p className="text-white/40 text-xs mt-1">Supply Chain Manager</p> */}
       </div>
 
       {/* Navigation */}

@@ -969,6 +969,44 @@ async function startServer() {
 // BENCHMARK ENDPOINT
 // ========================================
 
+// Single random asset query — fetches one random asset from blockchain then cache, returns raw latency.
+app.post('/api/benchmark/single', async (_req, res) => {
+  try {
+    const allResult = await contract.evaluateTransaction('GetAllAssets');
+    const assets = JSON.parse(allResult.toString());
+    if (assets.length === 0) return res.status(400).json({ success: false, error: 'No assets on ledger.' });
+
+    // Pick a random asset
+    const asset = assets[Math.floor(Math.random() * assets.length)];
+    const assetId = asset.ID;
+    const cacheKey = `asset:${assetId}`;
+
+    // Ensure it's cached
+    const existing = await smartCache.get(cacheKey);
+    if (!existing) {
+      const rawData = JSON.parse((await contract.evaluateTransaction('ReadAsset', assetId)).toString());
+      await smartCache.cacheWithContext(cacheKey, rawData, {
+        preCached: true, ttl: 3600, triggeredRule: 0,
+        ruleName: 'Benchmark', reason: 'Single query warm-up', priority: 'HIGH'
+      });
+    }
+
+    // Measure single blockchain query
+    const t1 = performance.now();
+    await contract.evaluateTransaction('ReadAsset', assetId);
+    const blockchainMs = parseFloat((performance.now() - t1).toFixed(2));
+
+    // Measure single cache query
+    const t2 = performance.now();
+    await smartCache.get(cacheKey);
+    const cacheMs = parseFloat((performance.now() - t2).toFixed(2));
+
+    res.json({ success: true, assetId, blockchainMs, cacheMs, speedup: parseFloat((blockchainMs / cacheMs).toFixed(1)) });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Fires N concurrent queries to both blockchain and Redis cache, returns real latency stats.
 // Used by the Benchmark page to show how response time degrades under concurrent load.
 app.post('/api/benchmark/run', async (req, res) => {

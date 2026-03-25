@@ -139,6 +139,12 @@ export const api = {
     return response.data;
   },
 
+  // Single random asset query — measures one blockchain vs one cache fetch
+  async runSingleQuery() {
+    const response = await axios.post(`${API_URL}/api/benchmark/single`);
+    return response.data;
+  },
+
   // Run concurrent load benchmark — fires N parallel queries to cache and blockchain
   // 2000 queries uses batched execution on the backend (~40 batches × 50) so allow 120s
   async runBenchmark(concurrency) {

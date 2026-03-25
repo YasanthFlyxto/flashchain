@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FlashChain SCM — w1954076",
-  description: "Supply Chain Management Platform — Yasanth Dolamulla FYP",
+  title: "FlashChain SCM - w1954076",
+  description: "Supply Chain Management Platform - Yasanth Dolamulla FYP",
 };
 
 export default function RootLayout({

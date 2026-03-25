@@ -12,11 +12,11 @@ const CONCURRENCY_LEVELS = [1, 5, 10, 20, 50, 100, 200];
 
 function StatBox({ label, value, sub, colour = 'gray' }) {
   const colours = {
-    cyan:  'bg-cyan-50 border-cyan-100 text-cyan-700',
-    navy:  'bg-blue-50 border-blue-100 text-blue-800',
+    cyan: 'bg-cyan-50 border-cyan-100 text-cyan-700',
+    navy: 'bg-blue-50 border-blue-100 text-blue-800',
     green: 'bg-green-50 border-green-100 text-green-700',
-    gray:  'bg-gray-50 border-gray-100 text-gray-700',
-    red:   'bg-red-50 border-red-100 text-red-700',
+    gray: 'bg-gray-50 border-gray-100 text-gray-700',
+    red: 'bg-red-50 border-red-100 text-red-700',
   };
   return (
     <div className={`rounded-xl border p-4 ${colours[colour]}`}>
@@ -50,12 +50,14 @@ const CustomTooltip = ({ active, payload, label }) => {
 };
 
 export default function BenchmarkPage() {
-  const [results, setResults]       = useState([]);
-  const [running, setRunning]       = useState(false);
-  const [progress, setProgress]     = useState(null);
-  const [error, setError]           = useState(null);
-  const [customVal, setCustomVal]   = useState('');
+  const [results, setResults] = useState([]);
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState(null);
+  const [error, setError] = useState(null);
+  const [customVal, setCustomVal] = useState('');
   const [customRunning, setCustomRunning] = useState(false);
+  const [singleResult, setSingleResult] = useState(null);
+  const [singleRunning, setSingleRunning] = useState(false);
 
   const runBenchmark = async () => {
     setRunning(true);
@@ -118,6 +120,18 @@ export default function BenchmarkPage() {
     setCustomRunning(false);
   };
 
+  const runSingle = async () => {
+    setSingleRunning(true);
+    setSingleResult(null);
+    try {
+      const r = await api.runSingleQuery();
+      if (r.success) setSingleResult(r);
+    } catch (e) {
+      setError('Single query failed: ' + (e?.response?.data?.error || e.message));
+    }
+    setSingleRunning(false);
+  };
+
   const maxResult = results.length > 0 ? results[results.length - 1] : null;
   const maxSpeedup = maxResult ? maxResult.speedup : null;
   const maxBlockchain = maxResult ? maxResult.blockchain : null;
@@ -130,7 +144,7 @@ export default function BenchmarkPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Throughput Benchmark</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            Live load test — how response time degrades under concurrent queries
+            Live load test, how response time degrades under concurrent queries
           </p>
         </div>
         <button
@@ -166,6 +180,7 @@ export default function BenchmarkPage() {
           <div>
             <p className="text-2xl font-bold text-green-700">
               FlashChain is <span className="text-4xl">{maxSpeedup}×</span> faster at {maxResult.concurrency} concurrent queries
+              <span className="text-lg text-green-500 ml-2">({((maxSpeedup - 1) * 100).toFixed(0)}% faster)</span>
             </p>
             <p className="text-sm text-green-600 mt-1">
               Blockchain avg: <strong>{maxBlockchain}ms</strong> &nbsp;·&nbsp;
@@ -210,13 +225,13 @@ export default function BenchmarkPage() {
       <div className="bg-white border border-gray-200 rounded-xl p-6">
         <h2 className="font-semibold text-gray-900 mb-1">Response Time vs Concurrent Load</h2>
         <p className="text-xs text-gray-400 mb-5">
-          Average latency (ms) as concurrent queries increase — showing real degradation under load
+          Average latency (ms) as concurrent queries increase, showing real degradation under load
         </p>
 
         {results.length === 0 && !running ? (
           <div className="h-64 flex flex-col items-center justify-center text-gray-400 gap-2">
             <Zap size={32} className="opacity-30" />
-            <p className="text-sm">Press <strong>Run Live Benchmark</strong> to fire real concurrent queries</p>
+            <p className="text-sm">Press <strong>Run Live Benchmark</strong></p>
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={300}>
@@ -305,33 +320,38 @@ export default function BenchmarkPage() {
         </div>
       )}
 
-      {/* Context card */}
-      <div className="bg-white border border-gray-200 rounded-xl p-5">
-        <h2 className="font-semibold text-gray-900 mb-2">Real-World Context</h2>
-        <div className="grid grid-cols-3 gap-4">
-          <StatBox
-            label="Rotterdam Port (daily)"
-            value="~200K"
-            sub="queries/day across 41,000 containers"
-            colour="navy"
-          />
-          <StatBox
-            label="Without FlashChain"
-            value="~2.8 hrs"
-            sub="cumulative blockchain wait per day"
-            colour="red"
-          />
-          <StatBox
-            label="With FlashChain"
-            value="~7 min"
-            sub="same load, 96% cache hit rate"
-            colour="green"
-          />
+      {/* Single Query Comparison */}
+      <div className="bg-white border border-gray-200 rounded-xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="font-semibold text-gray-900">Single Asset Query</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Fetches one random asset, blockchain vs cache, head to head</p>
+          </div>
+          <button
+            onClick={runSingle}
+            disabled={singleRunning}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white transition-all"
+            style={{ backgroundColor: singleRunning ? '#94a3b8' : '#1e3a5f' }}
+          >
+            <Zap size={14} />
+            {singleRunning ? 'Querying…' : 'Run Single Query'}
+          </button>
         </div>
-        <p className="text-xs text-gray-400 mt-4">
-          * Real-world figures extrapolated from measured latencies.
-          At 96% cache hit rate and 200,000 daily queries: (200K × 0.96 × 48ms saved) ≈ 2.56 hrs eliminated per day.
-        </p>
+
+        {singleResult ? (
+          <div className="space-y-4">
+            <p className="text-xs text-gray-400">Asset: <span className="font-mono text-gray-600">{singleResult.assetId}</span></p>
+            <div className="grid grid-cols-3 gap-4">
+              <StatBox label="Blockchain (Fabric)" value={`${singleResult.blockchainMs}ms`} sub="Single peer query via gRPC" colour="navy" />
+              <StatBox label="Cache (Redis)" value={`${singleResult.cacheMs}ms`} sub="Redis GET from memory" colour="cyan" />
+              <StatBox label="Latency Reduction" value={`${(((singleResult.blockchainMs - singleResult.cacheMs) / singleResult.blockchainMs) * 100).toFixed(1)}%`} sub={`${singleResult.speedup}× faster`} colour="green" />
+            </div>
+          </div>
+        ) : (
+          <div className="h-24 flex items-center justify-center text-gray-400 text-sm">
+            Press <strong className="mx-1">Run Single Query</strong> to fetch a random asset from both sources
+          </div>
+        )}
       </div>
     </div>
   );
