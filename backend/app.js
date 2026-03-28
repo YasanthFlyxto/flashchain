@@ -8,6 +8,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const smartCache = require('./middleware/cache');
 const { PreCachingRulesEngine } = require('./middleware/cache');
+const AdaptiveTuner = require('./middleware/adaptiveTuner');
 
 // ========================================
 // INDUSTRY PRESETS
@@ -54,6 +55,9 @@ let workerInterval = null;
 // Initialize Pre-Caching Rules Engine
 const preCacheRules = new PreCachingRulesEngine();
 
+// Initialize Adaptive Tuner — wired to rules engine + cache
+const adaptiveTuner = new AdaptiveTuner(preCacheRules, smartCache);
+
 // Track access patterns for Rule 2 (multi-stakeholder detection)
 const accessLog = {};
 
@@ -75,7 +79,8 @@ function enrichAssetWithLocation(asset) {
   const isTestAsset = asset.ID.startsWith('TEST_') ||
     asset.ID.startsWith('JOURNEY_') ||
     asset.ID.startsWith('BENCH_') ||
-    asset.ID.startsWith('DEMO_');
+    asset.ID.startsWith('DEMO_') ||
+    asset.ID.startsWith('PHARMA_');
 
   let checkpointDistance = 9999;
   let destinationDistance = 9999;
@@ -294,6 +299,9 @@ async function runBackgroundPrecacheWorker() {
           ttl: evaluation.ttl
         });
 
+        // Inform adaptive tuner that this asset was pre-cached by this rule
+        adaptiveTuner.recordPreCache(assetId, evaluation.triggeredRule, evaluation.ttl);
+
         const activity = {
           assetId,
           policy,
@@ -394,6 +402,9 @@ app.get('/api/asset/:id', async (req, res) => {
       stakeholder: stakeholderType,
       timestamp: Date.now()
     });
+
+    // Inform adaptive tuner that this asset was queried
+    adaptiveTuner.recordQuery(assetId);
 
     // Keep only last 24 hours
     accessLog[assetId] = accessLog[assetId].filter(
@@ -966,6 +977,38 @@ async function startServer() {
 }
 
 // ========================================
+// ADAPTIVE TUNER ENDPOINTS
+// ========================================
+
+// Get full adaptive tuner history — per-round precision/recall, adjustments, threshold drift
+app.get('/api/adaptive/history', (_req, res) => {
+  res.json({
+    success: true,
+    history: adaptiveTuner.getHistory(),
+    currentThresholds: adaptiveTuner.getCurrentThresholds(),
+    frequencyEMA: adaptiveTuner.getFrequencyEMA()
+  });
+});
+
+// Reset adaptive tuner state (for clean simulation runs)
+app.post('/api/adaptive/reset', (_req, res) => {
+  adaptiveTuner.reset();
+  preCacheRules.resetConfig();
+  res.json({ success: true, message: 'Adaptive tuner and rule thresholds reset to defaults' });
+});
+
+// Manually trigger end-of-round evaluation (used by simulation)
+app.post('/api/adaptive/end-round', async (_req, res) => {
+  try {
+    const summary = await adaptiveTuner.endRound();
+    adaptiveTuner.startRound();
+    res.json({ success: true, summary });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
 // BENCHMARK ENDPOINT
 // ========================================
 
@@ -1068,6 +1111,558 @@ app.post('/api/benchmark/run', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// CALIPER-LIKE SUSTAINED RATE BENCHMARK
+// ========================================
+//
+// Unlike /api/benchmark/run which fires a single burst of N queries,
+// this endpoint sustains a fixed query rate (TPS) for a set duration.
+// New queries fire on schedule regardless of whether previous ones finished —
+// exactly how Caliper and real-world automated systems behave.
+// This creates genuine backpressure on Fabric when throughput < send rate.
+
+app.post('/api/benchmark/sustained', async (req, res) => {
+  const { tps = 50, durationSeconds = 10 } = req.body;
+
+  try {
+    const allResult = await contract.evaluateTransaction('GetAllAssets');
+    const assets = JSON.parse(allResult.toString());
+    if (assets.length === 0) {
+      return res.status(400).json({ success: false, error: 'No assets on ledger.' });
+    }
+    const assetId = assets[0].ID;
+    const cacheKey = `asset:${assetId}`;
+
+    // Warm cache
+    const rawData = JSON.parse((await contract.evaluateTransaction('ReadAsset', assetId)).toString());
+    await smartCache.cacheWithContext(cacheKey, rawData, {
+      preCached: true, ttl: 3600, triggeredRule: 0,
+      ruleName: 'Benchmark', reason: 'Sustained benchmark warm-up', priority: 'HIGH'
+    });
+
+    const intervalMs   = 1000 / tps;
+    const totalQueries = tps * durationSeconds;
+    const target       = req.body.target || 'both'; // 'fabric', 'cache', or 'both'
+
+    // Helper: run one target at sustained rate using setInterval.
+    // setInterval fires one query per tick — no upfront timer registration,
+    // so the event loop is never overwhelmed regardless of duration.
+    const runTarget = (fn) => new Promise(resolve => {
+      const results = [];
+      let fired = 0;
+      const interval = setInterval(async () => {
+        if (fired >= totalQueries) { clearInterval(interval); return; }
+        fired++;
+        const t = performance.now();
+        try { await fn(); } catch (_) { }
+        results.push(parseFloat((performance.now() - t).toFixed(2)));
+        if (results.length === totalQueries) resolve(results);
+      }, intervalMs);
+    });
+
+    // Run Fabric and Redis separately so they don't compete for the event loop
+    const blockchainLatencies = (target === 'fabric' || target === 'both')
+      ? await runTarget(() => contract.evaluateTransaction('ReadAsset', assetId))
+      : null;
+
+    const cacheLatencies = (target === 'cache' || target === 'both')
+      ? await runTarget(() => smartCache.get(cacheKey))
+      : null;
+
+    const calcStats = (arr) => {
+      const sorted = [...arr].sort((a, b) => a - b);
+      const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
+      return {
+        avg:  parseFloat(avg.toFixed(2)),
+        p50:  parseFloat((sorted[Math.floor(sorted.length * 0.50)] ?? sorted[sorted.length - 1]).toFixed(2)),
+        p95:  parseFloat((sorted[Math.floor(sorted.length * 0.95)] ?? sorted[sorted.length - 1]).toFixed(2)),
+        p99:  parseFloat((sorted[Math.floor(sorted.length * 0.99)] ?? sorted[sorted.length - 1]).toFixed(2)),
+        min:  parseFloat(sorted[0].toFixed(2)),
+        max:  parseFloat(sorted[sorted.length - 1].toFixed(2)),
+        total: arr.length
+      };
+    };
+
+    res.json({
+      success: true,
+      tps,
+      durationSeconds,
+      totalQueries,
+      target,
+      assetId,
+      blockchain: blockchainLatencies ? calcStats(blockchainLatencies) : null,
+      cache:      cacheLatencies      ? calcStats(cacheLatencies)      : null
+    });
+
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// PHARMA SIMULATION SETUP
+// ========================================
+
+// Creates 6 controlled pharmaceutical shipments on the ledger.
+// Owner keywords drive deterministic enrichment in enrichAssetWithLocation():
+//   - "Transit-Approaching-Checkpoint" → checkpointDistance=10, Rule 1 fires
+//   - "Transit-NearDestination"        → destinationDistance=15, Rule 3 fires
+//   - "Transit-MidJourney"             → distance=250-300, Rule 4 excludes
+//   - "Disputed"                       → dispute override fires
+app.post('/api/benchmark/setup-pharma', async (_req, res) => {
+  const pharmaShipments = [
+    { id: 'PHARMA_01', color: 'Vaccines',     size: '500',   owner: 'Pfizer-Transit-Approaching-Checkpoint',  appraisedValue: '85000' },
+    { id: 'PHARMA_02', color: 'Antibiotics',  size: '200',   owner: 'Roche-Transit-NearDestination',           appraisedValue: '72000' },
+    { id: 'PHARMA_03', color: 'Insulin',      size: '150',   owner: 'AstraZeneca-Transit-MidJourney',          appraisedValue: '45000' },
+    { id: 'PHARMA_04', color: 'Vaccines',     size: '800',   owner: 'Novartis-Disputed-Transit',               appraisedValue: '95000' },
+    { id: 'PHARMA_05', color: 'Syringes',     size: '1000',  owner: 'GSK-Transit-Approaching-Checkpoint',      appraisedValue: '62000' },
+    { id: 'PHARMA_06', color: 'Diagnostics',  size: '300',   owner: 'Moderna-Transit-NearDestination',         appraisedValue: '78000' },
+  ];
+
+  const results = [];
+  for (const s of pharmaShipments) {
+    try {
+      // Check if exists first
+      try {
+        await contract.evaluateTransaction('ReadAsset', s.id);
+        results.push({ id: s.id, status: 'already_exists' });
+        continue;
+      } catch (_) {
+        // Doesn't exist — create it
+      }
+      const st = s.owner.includes('Disputed') ? 'DISPUTED' : s.owner.includes('Transit') ? 'In-Transit' : 'Delivered';
+      await contract.submitTransaction('CreateAsset', s.id, s.color, s.size, s.owner, s.appraisedValue, st);
+      results.push({ id: s.id, status: 'created' });
+    } catch (err) {
+      results.push({ id: s.id, status: 'error', error: err.message });
+    }
+  }
+
+  res.json({ success: true, results });
+});
+
+// Updates PHARMA_03 to simulate a mid-journey customs hold (query spike event)
+app.post('/api/benchmark/trigger-disruption', async (_req, res) => {
+  try {
+    await contract.submitTransaction('UpdateAsset', 'PHARMA_03', 'Insulin', '150',
+      'AstraZeneca-Transit-Approaching-Checkpoint', '45000');
+    // Invalidate cache so next query reflects new state
+    await smartCache.invalidate('asset:PHARMA_03');
+    res.json({ success: true, message: 'PHARMA_03 moved to checkpoint proximity — disruption active' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Reverts PHARMA_03 back to mid-journey state
+app.post('/api/benchmark/revert-disruption', async (_req, res) => {
+  try {
+    await contract.submitTransaction('UpdateAsset', 'PHARMA_03', 'Insulin', '150',
+      'AstraZeneca-Transit-MidJourney', '45000');
+    await smartCache.invalidate('asset:PHARMA_03');
+    res.json({ success: true, message: 'PHARMA_03 reverted to mid-journey' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ========================================
+// BENCHMARK SIMULATION — 3-WAY COMPARISON
+// ========================================
+
+// Runs the full benchmark simulation:
+//   - 3-way comparison: no-cache vs naive vs smart (one pass)
+//   - 10-round adaptive simulation: static rules vs adaptive tuner (second pass)
+//
+// Each round: 3 agents query 6 pharma shipments via /api/asset/:id path
+// (so access logs populate and Rule 2 can fire).
+// Disruption injected at round 4 — PHARMA_03 switches to checkpoint proximity.
+//
+// Returns: { comparison, adaptive }
+
+app.post('/api/benchmark/simulate', async (_req, res) => {
+  const PHARMA_IDS = ['PHARMA_01','PHARMA_02','PHARMA_03','PHARMA_04','PHARMA_05','PHARMA_06'];
+  const AGENTS = [
+    { name: 'Regulatory System',   stakeholder: 'regulatory',  targets: ['PHARMA_01','PHARMA_04','PHARMA_05'] },
+    { name: 'Hospital Inventory',  stakeholder: 'hospital',    targets: ['PHARMA_02','PHARMA_06','PHARMA_04'] },
+    { name: 'Cold Chain Monitor',  stakeholder: 'coldchain',   targets: ['PHARMA_01','PHARMA_02','PHARMA_03','PHARMA_05','PHARMA_06'] },
+  ];
+  // ── Helper: query one asset, return { source, latencyMs }
+  const queryAsset = async (assetId, stakeholder) => {
+    const t = performance.now();
+    const cacheKey = `asset:${assetId}`;
+
+    // Update access log (same as /api/asset/:id)
+    if (!accessLog[assetId]) accessLog[assetId] = [];
+    accessLog[assetId].push({ stakeholder, timestamp: Date.now() });
+    accessLog[assetId] = accessLog[assetId].filter(a => a.timestamp > Date.now() - 86400000);
+    adaptiveTuner.recordQuery(assetId);
+
+    const cached = await smartCache.get(cacheKey);
+    if (cached) {
+      return { source: 'cache', latencyMs: parseFloat((performance.now() - t).toFixed(2)) };
+    }
+
+    await contract.evaluateTransaction('ReadAsset', assetId);
+    return { source: 'blockchain', latencyMs: parseFloat((performance.now() - t).toFixed(2)) };
+  };
+
+  // ── Helper: query one asset bypassing cache entirely (no-cache mode)
+  const queryBlockchainDirect = async (assetId) => {
+    const t = performance.now();
+    await contract.evaluateTransaction('ReadAsset', assetId);
+    return parseFloat((performance.now() - t).toFixed(2));
+  };
+
+  // ── Helper: query one asset with naive cache (fixed 5-min TTL, no rules)
+  const queryNaive = async (assetId) => {
+    const t = performance.now();
+    const cacheKey = `naive:${assetId}`;
+    const cached = await smartCache.get(cacheKey);
+    if (cached) {
+      return { source: 'cache', latencyMs: parseFloat((performance.now() - t).toFixed(2)) };
+    }
+    const raw = await contract.evaluateTransaction('ReadAsset', assetId);
+    const data = JSON.parse(raw.toString());
+    await smartCache.cacheWithContext(cacheKey, data, { preCached: false, ttl: 300 });
+    return { source: 'blockchain', latencyMs: parseFloat((performance.now() - t).toFixed(2)) };
+  };
+
+  try {
+    // Ensure pharma shipments exist
+    for (const id of PHARMA_IDS) {
+      try { await contract.evaluateTransaction('ReadAsset', id); }
+      catch (_) {
+        return res.status(400).json({
+          success: false,
+          error: `Pharma shipments not found. Run /api/benchmark/setup-pharma first.`
+        });
+      }
+    }
+
+    // ════════════════════════════════════════════════════════
+    // PART 1: 3-WAY COMPARISON (single pass, 3 rounds each)
+    // No-cache vs Naive vs Smart — same workload, 3 rounds
+    // ════════════════════════════════════════════════════════
+
+    const comparison = { noCache: [], naive: [], smart: [] };
+
+    // Flush everything for clean start
+    await smartCache.flushAll();
+    smartCache.resetStats();
+
+    for (let round = 1; round <= 3; round++) {
+      // ── No-cache round
+      const noCacheRound = { round, hits: 0, misses: 0, blockchainCalls: 0, avgLatencyMs: 0 };
+      const noCacheLatencies = [];
+      for (const agent of AGENTS) {
+        for (const id of agent.targets) {
+          const latency = await queryBlockchainDirect(id);
+          noCacheLatencies.push(latency);
+          noCacheRound.blockchainCalls++;
+          noCacheRound.misses++;
+        }
+      }
+      noCacheRound.avgLatencyMs = parseFloat(
+        (noCacheLatencies.reduce((a, b) => a + b, 0) / noCacheLatencies.length).toFixed(2)
+      );
+      comparison.noCache.push(noCacheRound);
+
+      // ── Naive-cache round (uses naive: prefix keys)
+      const naiveRound = { round, hits: 0, misses: 0, blockchainCalls: 0, avgLatencyMs: 0 };
+      const naiveLatencies = [];
+      for (const agent of AGENTS) {
+        for (const id of agent.targets) {
+          const result = await queryNaive(id);
+          naiveLatencies.push(result.latencyMs);
+          if (result.source === 'cache') naiveRound.hits++;
+          else { naiveRound.misses++; naiveRound.blockchainCalls++; }
+        }
+      }
+      naiveRound.avgLatencyMs = parseFloat(
+        (naiveLatencies.reduce((a, b) => a + b, 0) / naiveLatencies.length).toFixed(2)
+      );
+      comparison.naive.push(naiveRound);
+
+      // ── Smart-cache round (pre-cache worker runs first)
+      if (round === 1) {
+        // Run worker once to pre-cache based on rules
+        adaptiveTuner.startRound();
+        await runBackgroundPrecacheWorker();
+      }
+      const smartRound = { round, hits: 0, misses: 0, blockchainCalls: 0, avgLatencyMs: 0 };
+      const smartLatencies = [];
+      for (const agent of AGENTS) {
+        for (const id of agent.targets) {
+          const result = await queryAsset(id, agent.stakeholder);
+          smartLatencies.push(result.latencyMs);
+          if (result.source === 'cache') smartRound.hits++;
+          else { smartRound.misses++; smartRound.blockchainCalls++; }
+        }
+      }
+      smartRound.avgLatencyMs = parseFloat(
+        (smartLatencies.reduce((a, b) => a + b, 0) / smartLatencies.length).toFixed(2)
+      );
+      comparison.smart.push(smartRound);
+    }
+
+    // Clean naive cache keys
+    for (const id of PHARMA_IDS) {
+      await smartCache.invalidate(`naive:${id}`);
+    }
+
+    // ════════════════════════════════════════════════════════
+    // PART 2: SELF-HEALING BENCHMARK (8 rounds)
+    // Static rules vs Adaptive tuner
+    //
+    // R1-R3: Normal operation with good thresholds (~91% hit rate)
+    // R4:    Misconfiguration injected — thresholds tightened for both passes
+    // R5-R8: Adaptive detects recall drop, widens thresholds, recovers
+    //        Static stays degraded — no self-healing
+    // ════════════════════════════════════════════════════════
+
+    const savedConfig = JSON.parse(JSON.stringify(preCacheRules.getConfig()));
+    const ROUNDS = 8;
+    const DISRUPTION_ROUND = 4;
+
+    const GOOD_CONFIG = {
+      rule1: { checkpointDistanceKm: 20, etaMinutes: 60, ttlMinutes: 30, enabled: true },
+      rule2: { accessCountThreshold: 3,  minOrganizations: 2, windowHours: 1, ttlHours: 24, enabled: true },
+      rule3: { valueThresholdUsd: 50000, destDistanceKm: 50, ttlMinutes: 45, enabled: true },
+      rule4: { minCheckpointDistanceKm: 200, minDestDistanceKm: 200, maxNormalAccesses: 3, enabled: true }
+    };
+
+    const TIGHT_CONFIG = {
+      rule1: { checkpointDistanceKm: 5,  etaMinutes: 60, ttlMinutes: 30, enabled: true },
+      rule2: { accessCountThreshold: 5,  minOrganizations: 2, windowHours: 1, ttlHours: 24, enabled: true },
+      rule3: { valueThresholdUsd: 50000, destDistanceKm: 8,  ttlMinutes: 45, enabled: true },
+      rule4: { minCheckpointDistanceKm: 200, minDestDistanceKm: 200, maxNormalAccesses: 3, enabled: true }
+    };
+
+    // ── Helper: run one simulation pass (static or adaptive)
+    const runSimulationPass = async (mode) => {
+      adaptiveTuner.reset();
+      preCacheRules.updateConfig(JSON.parse(JSON.stringify(GOOD_CONFIG))); // start healthy
+      await smartCache.flushAll();
+      smartCache.resetStats();
+      for (const id of PHARMA_IDS) { accessLog[id] = []; }
+
+      const rounds = [];
+      for (let round = 1; round <= ROUNDS; round++) {
+        // Inject misconfiguration at disruption round for both passes
+        if (round === DISRUPTION_ROUND) {
+          preCacheRules.updateConfig(JSON.parse(JSON.stringify(TIGHT_CONFIG)));
+        }
+
+        adaptiveTuner.startRound();
+        await smartCache.flushAll();
+        for (const id of PHARMA_IDS) { accessLog[id] = []; }
+        await runBackgroundPrecacheWorker();
+
+        const roundStats = { round, hits: 0, misses: 0, blockchainCalls: 0, totalQueries: 0, avgLatencyMs: 0 };
+        const latencies = [];
+        for (const agent of AGENTS) {
+          for (const id of agent.targets) {
+            const result = await queryAsset(id, agent.stakeholder);
+            latencies.push(result.latencyMs);
+            roundStats.totalQueries++;
+            if (result.source === 'cache') roundStats.hits++;
+            else { roundStats.misses++; roundStats.blockchainCalls++; }
+          }
+        }
+        roundStats.hitRate = parseFloat((roundStats.hits / roundStats.totalQueries).toFixed(3));
+        roundStats.avgLatencyMs = parseFloat(
+          (latencies.reduce((a, b) => a + b, 0) / latencies.length).toFixed(2)
+        );
+
+        if (mode === 'adaptive') {
+          const tuningSummary = await adaptiveTuner.endRound();
+          roundStats.thresholdAdjustments = tuningSummary.thresholdAdjustments;
+          roundStats.ttlAdjustments       = tuningSummary.ttlAdjustments;
+          roundStats.currentThresholds    = tuningSummary.currentThresholds;
+        } else {
+          roundStats.thresholdAdjustments = [];
+          roundStats.ttlAdjustments       = [];
+          roundStats.currentThresholds    = {
+            rule1_checkpointDistanceKm: preCacheRules.config.rule1.checkpointDistanceKm,
+            rule2_accessCountThreshold: preCacheRules.config.rule2.accessCountThreshold,
+            rule3_valueThresholdUsd:    preCacheRules.config.rule3.valueThresholdUsd,
+            rule3_destDistanceKm:       preCacheRules.config.rule3.destDistanceKm
+          };
+        }
+
+        rounds.push(roundStats);
+      }
+      return rounds;
+    };
+
+    // Run both passes
+    const staticRounds   = await runSimulationPass('static');
+    const adaptiveRounds = await runSimulationPass('adaptive');
+
+    // Restore original config
+    preCacheRules.updateConfig(savedConfig);
+
+    res.json({
+      success: true,
+      comparison,
+      adaptive: {
+        staticRounds,
+        adaptiveRounds,
+        disruptionRound: DISRUPTION_ROUND,
+        adjustmentLog: adaptiveTuner.getHistory()
+      }
+    });
+
+  } catch (error) {
+    console.error('[Simulate] Error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// ADAPTIVE TUNER DEMO — 3 STEP EXPLAINER
+// ========================================
+//
+// Step 1: /api/tuner-demo/reset  — set deliberately tight thresholds, flush cache
+// Step 2: /api/tuner-demo/measure — run worker + queries, return hit rate + thresholds
+// Step 3: /api/tuner-demo/tune   — run endRound(), return what changed and why
+//
+// Frontend calls these in sequence with a button per step.
+// Shows: bad config → 0% hit rate → tuner detects → fixes thresholds → hit rate improves.
+
+const TUNER_DEMO_IDS = ['PHARMA_01','PHARMA_02','PHARMA_03','PHARMA_04','PHARMA_05','PHARMA_06'];
+const TUNER_DEMO_AGENTS = [
+  { stakeholder: 'regulatory', targets: ['PHARMA_01','PHARMA_04','PHARMA_05'] },
+  { stakeholder: 'hospital',   targets: ['PHARMA_02','PHARMA_06','PHARMA_04'] },
+  { stakeholder: 'coldchain',  targets: ['PHARMA_01','PHARMA_02','PHARMA_03','PHARMA_05','PHARMA_06'] },
+];
+const TUNER_DEMO_TIGHT_CONFIG = {
+  rule1: { checkpointDistanceKm: 5,  etaMinutes: 60, ttlMinutes: 30, enabled: true },
+  rule2: { accessCountThreshold: 10, minOrganizations: 2, windowHours: 1, ttlHours: 24, enabled: true },
+  rule3: { valueThresholdUsd: 50000, destDistanceKm: 8, ttlMinutes: 45, enabled: true },
+  rule4: { minCheckpointDistanceKm: 200, minDestDistanceKm: 200, maxNormalAccesses: 3, enabled: true }
+};
+
+// Step 1 — reset to tight (bad) thresholds
+app.post('/api/tuner-demo/reset', async (_req, res) => {
+  try {
+    adaptiveTuner.reset();
+    preCacheRules.updateConfig(JSON.parse(JSON.stringify(TUNER_DEMO_TIGHT_CONFIG)));
+    await smartCache.flushAll();
+    for (const id of TUNER_DEMO_IDS) { accessLog[id] = []; }
+
+    res.json({
+      success: true,
+      message: 'Thresholds set to tight (misconfigured) values. Cache cleared.',
+      thresholds: adaptiveTuner.getCurrentThresholds()
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Step 2 — run worker + queries, measure hit rate
+app.post('/api/tuner-demo/measure', async (_req, res) => {
+  try {
+    // Start a fresh tuner round
+    adaptiveTuner.startRound();
+
+    // Run worker — pre-caches based on current (tight) thresholds
+    await runBackgroundPrecacheWorker();
+
+    // Agents query
+    let hits = 0, misses = 0, totalQueries = 0;
+    const details = [];
+
+    for (const agent of TUNER_DEMO_AGENTS) {
+      for (const id of agent.targets) {
+        const cacheKey = `asset:${id}`;
+        if (!accessLog[id]) accessLog[id] = [];
+        accessLog[id].push({ stakeholder: agent.stakeholder, timestamp: Date.now() });
+        adaptiveTuner.recordQuery(id);
+
+        const cached = await smartCache.get(cacheKey);
+        const source = cached ? 'cache' : 'blockchain';
+        if (source === 'cache') hits++; else misses++;
+        totalQueries++;
+
+        if (!details.find(d => d.id === id)) {
+          details.push({ id, source, preCached: !!cached });
+        }
+      }
+    }
+
+    const hitRate = parseFloat((hits / totalQueries).toFixed(3));
+
+    res.json({
+      success: true,
+      hitRate,
+      hitRatePct: Math.round(hitRate * 100),
+      hits,
+      misses,
+      totalQueries,
+      thresholds: adaptiveTuner.getCurrentThresholds(),
+      assetDetails: details
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Step 3 — run tuner, return adjustments, then measure again
+app.post('/api/tuner-demo/tune', async (_req, res) => {
+  try {
+    // Run the tuner — adjusts thresholds based on precision/recall
+    const tuningSummary = await adaptiveTuner.endRound();
+
+    // Now measure again with new thresholds
+    await smartCache.flushAll();
+    for (const id of TUNER_DEMO_IDS) { accessLog[id] = []; }
+    adaptiveTuner.startRound();
+    await runBackgroundPrecacheWorker();
+
+    let hits = 0, misses = 0, totalQueries = 0;
+    const details = [];
+
+    for (const agent of TUNER_DEMO_AGENTS) {
+      for (const id of agent.targets) {
+        const cacheKey = `asset:${id}`;
+        if (!accessLog[id]) accessLog[id] = [];
+        accessLog[id].push({ stakeholder: agent.stakeholder, timestamp: Date.now() });
+        adaptiveTuner.recordQuery(id);
+
+        const cached = await smartCache.get(cacheKey);
+        const source = cached ? 'cache' : 'blockchain';
+        if (source === 'cache') hits++; else misses++;
+        totalQueries++;
+
+        if (!details.find(d => d.id === id)) {
+          details.push({ id, source, preCached: !!cached });
+        }
+      }
+    }
+
+    const hitRate = parseFloat((hits / totalQueries).toFixed(3));
+
+    res.json({
+      success: true,
+      adjustments: tuningSummary.thresholdAdjustments,
+      recall: tuningSummary.recall,
+      rulePrecision: tuningSummary.rulePrecision,
+      newThresholds: adaptiveTuner.getCurrentThresholds(),
+      afterHitRate: hitRate,
+      afterHitRatePct: Math.round(hitRate * 100),
+      hits,
+      misses,
+      totalQueries,
+      assetDetails: details
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

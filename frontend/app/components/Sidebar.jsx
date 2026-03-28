@@ -8,15 +8,17 @@ import {
   Package,
   Database,
   Settings2,
-  BarChart3,
+  FlaskConical,
+  BrainCircuit,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
-  { href: '/',           label: 'Dashboard',          icon: LayoutDashboard },
-  { href: '/shipments',  label: 'Shipments',          icon: Package },
-  { href: '/cache',      label: 'Cache Intelligence', icon: Database },
-  { href: '/policy',     label: 'Policy Studio',      icon: Settings2 },
-  { href: '/analytics',  label: 'Benchmark',          icon: BarChart3 },
+  { href: '/',            label: 'Dashboard',          icon: LayoutDashboard },
+  { href: '/shipments',   label: 'Shipments',          icon: Package },
+  { href: '/cache',       label: 'Cache Intelligence', icon: Database },
+  { href: '/policy',      label: 'Policy Studio',      icon: Settings2 },
+  { href: '/benchmark',   label: 'Benchmark',          icon: FlaskConical },
+  { href: '/tuner-demo',  label: 'Tuner Demo',         icon: BrainCircuit },
 ];
 
 export default function Sidebar() {

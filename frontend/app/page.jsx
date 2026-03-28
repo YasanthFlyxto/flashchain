@@ -121,13 +121,7 @@ export default function Dashboard() {
           icon={Activity}
           accent={disputedCount > 0 ? 'red' : 'amber'}
         />
-        <KPICard
-          label="Cache Hit Rate"
-          value={loading ? '…' : (typeof hitRate === 'number' ? `${hitRate.toFixed(1)}%` : hitRate)}
-          sub={`${stats?.cacheHits ?? 0} hits · ${stats?.cacheMisses ?? 0} misses`}
-          icon={Zap}
-          accent="green"
-        />
+   
         <KPICard
           label="Pre-Cached"
           value={loading ? '…' : preCachedCount}

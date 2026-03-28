@@ -146,9 +146,55 @@ export const api = {
   },
 
   // Run concurrent load benchmark — fires N parallel queries to cache and blockchain
-  // 2000 queries uses batched execution on the backend (~40 batches × 50) so allow 120s
   async runBenchmark(concurrency) {
     const response = await axios.post(`${API_URL}/api/benchmark/run`, { concurrency }, { timeout: 120000 });
+    return response.data;
+  },
+
+  // Caliper-like sustained rate benchmark — runs fabric, cache, or both separately
+  async runSustainedBenchmark(tps, durationSeconds, target = 'both') {
+    const timeout = (durationSeconds * 2 + 60) * 1000;
+    const response = await axios.post(`${API_URL}/api/benchmark/sustained`, { tps, durationSeconds, target }, { timeout });
+    return response.data;
+  },
+
+  // ── Adaptive tuner demo ─────────────────────────────────────────────────────
+  async tunerDemoReset()   { return (await axios.post(`${API_URL}/api/tuner-demo/reset`)).data; },
+  async tunerDemoMeasure() { return (await axios.post(`${API_URL}/api/tuner-demo/measure`)).data; },
+  async tunerDemoTune()    { return (await axios.post(`${API_URL}/api/tuner-demo/tune`)).data; },
+
+  // ── Benchmark simulation ────────────────────────────────────────────────────
+
+  // Create 6 controlled pharma shipments on the ledger
+  async setupPharma() {
+    const response = await axios.post(`${API_URL}/api/benchmark/setup-pharma`);
+    return response.data;
+  },
+
+  // Trigger disruption — PHARMA_03 moves to checkpoint proximity at round 4
+  async triggerDisruption() {
+    const response = await axios.post(`${API_URL}/api/benchmark/trigger-disruption`);
+    return response.data;
+  },
+
+  // Run full simulation: 3-way comparison + 10-round adaptive vs static
+  // Long-running — allow up to 3 minutes
+  async runSimulation() {
+    const response = await axios.post(`${API_URL}/api/benchmark/simulate`, {}, { timeout: 180000 });
+    return response.data;
+  },
+
+  // ── Adaptive tuner ──────────────────────────────────────────────────────────
+
+  // Get full tuner history — per-round precision/recall, threshold drift
+  async getAdaptiveHistory() {
+    const response = await axios.get(`${API_URL}/api/adaptive/history`);
+    return response.data;
+  },
+
+  // Reset tuner and rules to defaults
+  async resetAdaptiveTuner() {
+    const response = await axios.post(`${API_URL}/api/adaptive/reset`);
     return response.data;
   },
 

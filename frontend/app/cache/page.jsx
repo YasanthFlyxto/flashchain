@@ -135,73 +135,11 @@ export default function CacheIntelligencePage() {
         </div>
       </div>
 
-      {/* Stats cards */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-green-50 border border-green-100">
-              <Zap size={20} className="text-green-500" />
-            </div>
-            <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Cache Hit Rate</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {hitRate != null ? (typeof hitRate === 'number' ? `${hitRate.toFixed(1)}%` : hitRate) : '-'}
-              </p>
-              <p className="text-xs text-gray-400">{stats?.cacheHits ?? 0} hits · {stats?.cacheMisses ?? 0} misses</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-cyan-50 border border-cyan-100">
-              <Database size={20} className="text-cyan-500" />
-            </div>
-            <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Avg Cache Latency</p>
-              <p className="text-2xl font-bold text-cyan-600">{avgCacheMs}ms</p>
-              <p className="text-xs text-gray-400">Redis in-memory response</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-gray-50 border border-gray-100">
-              <Clock size={20} className="text-gray-500" />
-            </div>
-            <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Avg Blockchain Latency</p>
-              <p className="text-2xl font-bold text-gray-700">{avgChainMs}ms</p>
-              <p className="text-xs text-gray-400">Hyperledger Fabric peer query</p>
-            </div>
-          </div>
-        </div>
-      </div>
+    
 
       {/* Chart + Cached List */}
-      <div className="grid grid-cols-5 gap-6">
-        {/* Latency Comparison Chart */}
-        <div className="col-span-3 bg-white border border-gray-200 rounded-xl p-5">
-          <h2 className="font-semibold text-gray-900 mb-1">Latency Comparison</h2>
-          <p className="text-xs text-gray-400 mb-4">Cache (Redis) vs Blockchain per shipment - live measurements</p>
-          {comparisonData.length === 0 ? (
-            <div className="h-56 flex items-center justify-center text-gray-400 text-sm">
-              {loading ? 'Building comparison…' : 'No cached shipments to compare. Run the worker first.'}
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={comparisonData} margin={{ top: 0, right: 10, left: -10, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                <YAxis unit="ms" tick={{ fontSize: 11 }} />
-                <Tooltip formatter={(v) => `${v}ms`} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar dataKey="Cache (Redis)" fill="#06b6d4" radius={[4,4,0,0]} />
-                <Bar dataKey="Blockchain"   fill="#1e3a5f" radius={[4,4,0,0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-
+     
+       
         {/* Pre-Cached Shipments */}
         <div className="col-span-2 bg-white border border-gray-200 rounded-xl overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-100">
@@ -229,7 +167,7 @@ export default function CacheIntelligencePage() {
             )}
           </div>
         </div>
-      </div>
+
 
       {/* Activity Log */}
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
