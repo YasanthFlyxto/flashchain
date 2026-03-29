@@ -16,7 +16,7 @@
 //     - Both acceptable     → no change, hold steady
 //
 //   Additionally, per-asset EMA frequency tracking detects access spikes and
-//   extends Redis TTL for assets under unexpected high demand — preventing cache
+//   extends Redis TTL for assets under unexpected high demand - preventing cache
 //   expiry during active query bursts (e.g. customs hold, dispute investigation).
 //
 // References:
@@ -31,34 +31,34 @@
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
 
-const EMA_ALPHA = 0.3;          // Smoothing factor — reacts to spikes but ignores noise
+const EMA_ALPHA = 0.3;          // Smoothing factor - reacts to spikes but ignores noise
 const SPIKE_MULTIPLIER = 2.0;   // current > 2× EMA → spike detected
 const COOLING_MULTIPLIER = 0.5; // current < 0.5× EMA → cooling detected
 
-const PRECISION_LOW_THRESHOLD  = 0.55; // below this = too much waste
-const RECALL_LOW_THRESHOLD     = 0.60; // below this = too many cold queries
+const PRECISION_LOW_THRESHOLD = 0.55; // below this = too much waste
+const RECALL_LOW_THRESHOLD = 0.60; // below this = too many cold queries
 
-const NUDGE_DISTANCE_KM        = 2;    // km step for Rule 1 checkpoint distance
-const NUDGE_DEST_DISTANCE_KM   = 5;    // km step for Rule 3 destination distance
-const NUDGE_VALUE_USD          = 5000; // USD step for Rule 3 value threshold
-const NUDGE_ACCESS_COUNT       = 1;    // count step for Rule 2 access threshold
+const NUDGE_DISTANCE_KM = 2;    // km step for Rule 1 checkpoint distance
+const NUDGE_DEST_DISTANCE_KM = 5;    // km step for Rule 3 destination distance
+const NUDGE_VALUE_USD = 5000; // USD step for Rule 3 value threshold
+const NUDGE_ACCESS_COUNT = 1;    // count step for Rule 2 access threshold
 
-const TTL_SPIKE_MULTIPLIER     = 1.5;  // extend TTL by 50% on spike
-const TTL_COOLING_MULTIPLIER   = 0.75; // shrink TTL by 25% on cooling
-const TTL_SPIKE_MAX_SECONDS    = 7200; // never extend beyond 2 hours
-const TTL_COOLING_MIN_SECONDS  = 120;  // never shrink below 2 minutes
+const TTL_SPIKE_MULTIPLIER = 1.5;  // extend TTL by 50% on spike
+const TTL_COOLING_MULTIPLIER = 0.75; // shrink TTL by 25% on cooling
+const TTL_SPIKE_MAX_SECONDS = 7200; // never extend beyond 2 hours
+const TTL_COOLING_MIN_SECONDS = 120;  // never shrink below 2 minutes
 
-// Hard bounds on thresholds — prevents runaway nudging
+// Hard bounds on thresholds - prevents runaway nudging
 const BOUNDS = {
   rule1: {
-    checkpointDistanceKm: { min: 5,      max: 60    }
+    checkpointDistanceKm: { min: 5, max: 60 }
   },
   rule2: {
-    accessCountThreshold: { min: 1,      max: 10    }
+    accessCountThreshold: { min: 1, max: 10 }
   },
   rule3: {
-    valueThresholdUsd:    { min: 10000,  max: 200000 },
-    destDistanceKm:       { min: 10,     max: 150    }
+    valueThresholdUsd: { min: 10000, max: 200000 },
+    destDistanceKm: { min: 10, max: 150 }
   }
 };
 
@@ -68,12 +68,12 @@ const BOUNDS = {
 
 class AdaptiveTuner {
   /**
-   * @param {PreCachingRulesEngine} rulesEngine — will have its thresholds nudged
-   * @param {SmartCache}            smartCache  — needed to update TTLs in Redis
+   * @param {PreCachingRulesEngine} rulesEngine - will have its thresholds nudged
+   * @param {SmartCache}            smartCache  - needed to update TTLs in Redis
    */
   constructor(rulesEngine, smartCache) {
     this.rulesEngine = rulesEngine;
-    this.smartCache  = smartCache;
+    this.smartCache = smartCache;
 
     // Per-asset exponential moving average of query frequency (queries/round)
     this.frequencyEMA = {};
@@ -81,7 +81,7 @@ class AdaptiveTuner {
     // Current round observation window
     this._round = this._emptyRound();
 
-    // Full history — returned to frontend for charts
+    // Full history - returned to frontend for charts
     this.history = [];
 
     // Running round counter
@@ -105,8 +105,8 @@ class AdaptiveTuner {
   /**
    * Call when the worker pre-caches an asset.
    * @param {string} assetId
-   * @param {string} rule    — e.g. 'Rule 1', 'Rule 2', 'Policy 01'
-   * @param {number} ttl     — TTL in seconds the worker assigned
+   * @param {string} rule    - e.g. 'Rule 1', 'Rule 2', 'Policy 01'
+   * @param {number} ttl     - TTL in seconds the worker assigned
    */
   recordPreCache(assetId, rule, ttl) {
     this._round.preCached[assetId] = {
@@ -134,7 +134,7 @@ class AdaptiveTuner {
       this._round.preCached[assetId].queried = true;
     }
 
-    // Update EMA — use query count so far this round as the signal
+    // Update EMA - use query count so far this round as the signal
     const currentCount = this._round.queried[assetId].count;
     if (this.frequencyEMA[assetId] === undefined) {
       this.frequencyEMA[assetId] = currentCount;
@@ -151,7 +151,7 @@ class AdaptiveTuner {
    */
   async endRound() {
     const preCached = this._round.preCached;
-    const queried   = this._round.queried;
+    const queried = this._round.queried;
 
     // ── Per-rule precision ────────────────────────────────────────────────────
     // Precision[rule] = queried pre-caches / total pre-caches for that rule
@@ -175,16 +175,16 @@ class AdaptiveTuner {
 
     // ── Overall recall ────────────────────────────────────────────────────────
     // Recall = queries served from cache / total queries this round
-    const totalQueried    = Object.keys(queried).length;
-    const coveredByCache  = Object.keys(queried).filter(id => preCached[id]).length;
-    const overallRecall   = totalQueried > 0
+    const totalQueried = Object.keys(queried).length;
+    const coveredByCache = Object.keys(queried).filter(id => preCached[id]).length;
+    const overallRecall = totalQueried > 0
       ? parseFloat((coveredByCache / totalQueried).toFixed(3))
       : 1.0;
 
     // ── Threshold nudging ─────────────────────────────────────────────────────
     const adjustments = [];
 
-    // Rule 1 — checkpoint distance
+    // Rule 1 - checkpoint distance
     const r1Precision = rulePrecision['Rule 1'];
     if (r1Precision != null) {
       const current = this.rulesEngine.config.rule1.checkpointDistanceKm;
@@ -195,7 +195,7 @@ class AdaptiveTuner {
         if (next !== current) {
           this.rulesEngine.updateConfig({ rule1: { checkpointDistanceKm: next } });
           adjustments.push(this._adj('Rule 1', 'checkpointDistanceKm', current, next,
-            `Precision ${(r1Precision * 100).toFixed(0)}% — pre-caching too early, tightening window`));
+            `Precision ${(r1Precision * 100).toFixed(0)}% - pre-caching too early, tightening window`));
         }
 
       } else if (overallRecall < RECALL_LOW_THRESHOLD && r1Precision >= PRECISION_LOW_THRESHOLD) {
@@ -204,32 +204,32 @@ class AdaptiveTuner {
         if (next !== current) {
           this.rulesEngine.updateConfig({ rule1: { checkpointDistanceKm: next } });
           adjustments.push(this._adj('Rule 1', 'checkpointDistanceKm', current, next,
-            `Recall ${(overallRecall * 100).toFixed(0)}% — missing queries, expanding window`));
+            `Recall ${(overallRecall * 100).toFixed(0)}% - missing queries, expanding window`));
         }
 
       } else if (overallRecall < RECALL_LOW_THRESHOLD && r1Precision < PRECISION_LOW_THRESHOLD) {
-        // Both low — recall takes priority, loosen
+        // Both low - recall takes priority, loosen
         const next = Math.min(BOUNDS.rule1.checkpointDistanceKm.max, current + NUDGE_DISTANCE_KM);
         if (next !== current) {
           this.rulesEngine.updateConfig({ rule1: { checkpointDistanceKm: next } });
           adjustments.push(this._adj('Rule 1', 'checkpointDistanceKm', current, next,
-            `Both precision and recall low — recall priority, expanding window`));
+            `Both precision and recall low - recall priority, expanding window`));
         }
       }
 
     } else if (overallRecall < RECALL_LOW_THRESHOLD) {
-      // Rule 1 didn't fire at all — if recall is low, widen it (explore)
+      // Rule 1 didn't fire at all - if recall is low, widen it (explore)
       // An idle rule may be too tight to catch any assets; expanding lets it contribute.
       const current = this.rulesEngine.config.rule1.checkpointDistanceKm;
       const next = Math.min(BOUNDS.rule1.checkpointDistanceKm.max, current + NUDGE_DISTANCE_KM);
       if (next !== current) {
         this.rulesEngine.updateConfig({ rule1: { checkpointDistanceKm: next } });
         adjustments.push(this._adj('Rule 1', 'checkpointDistanceKm', current, next,
-          `Recall ${(overallRecall * 100).toFixed(0)}% — Rule 1 idle, expanding checkpoint window`));
+          `Recall ${(overallRecall * 100).toFixed(0)}% - Rule 1 idle, expanding checkpoint window`));
       }
     }
 
-    // Rule 2 — access count threshold
+    // Rule 2 - access count threshold
     const r2Precision = rulePrecision['Rule 2'];
     if (r2Precision != null) {
       const current = this.rulesEngine.config.rule2.accessCountThreshold;
@@ -239,7 +239,7 @@ class AdaptiveTuner {
         if (next !== current) {
           this.rulesEngine.updateConfig({ rule2: { accessCountThreshold: next } });
           adjustments.push(this._adj('Rule 2', 'accessCountThreshold', current, next,
-            `Precision ${(r2Precision * 100).toFixed(0)}% — threshold too low, raising access count`));
+            `Precision ${(r2Precision * 100).toFixed(0)}% - threshold too low, raising access count`));
         }
 
       } else if (overallRecall < RECALL_LOW_THRESHOLD) {
@@ -247,44 +247,44 @@ class AdaptiveTuner {
         if (next !== current) {
           this.rulesEngine.updateConfig({ rule2: { accessCountThreshold: next } });
           adjustments.push(this._adj('Rule 2', 'accessCountThreshold', current, next,
-            `Recall ${(overallRecall * 100).toFixed(0)}% — lowering access threshold to catch more`));
+            `Recall ${(overallRecall * 100).toFixed(0)}% - lowering access threshold to catch more`));
         }
       }
     }
 
-    // Rule 3 — value threshold and destination distance
+    // Rule 3 - value threshold and destination distance
     const r3Precision = rulePrecision['Rule 3'];
     if (r3Precision != null) {
       const currentValue = this.rulesEngine.config.rule3.valueThresholdUsd;
-      const currentDist  = this.rulesEngine.config.rule3.destDistanceKm;
+      const currentDist = this.rulesEngine.config.rule3.destDistanceKm;
 
       if (r3Precision < PRECISION_LOW_THRESHOLD && overallRecall >= RECALL_LOW_THRESHOLD) {
-        // Tighten — raise value threshold (cache fewer, higher-value assets)
+        // Tighten - raise value threshold (cache fewer, higher-value assets)
         const next = Math.min(BOUNDS.rule3.valueThresholdUsd.max, currentValue + NUDGE_VALUE_USD);
         if (next !== currentValue) {
           this.rulesEngine.updateConfig({ rule3: { valueThresholdUsd: next } });
           adjustments.push(this._adj('Rule 3', 'valueThresholdUsd', currentValue, next,
-            `Precision ${(r3Precision * 100).toFixed(0)}% — too many low-value caches, raising threshold`));
+            `Precision ${(r3Precision * 100).toFixed(0)}% - too many low-value caches, raising threshold`));
         }
 
       } else if (overallRecall < RECALL_LOW_THRESHOLD) {
-        // Loosen — expand destination distance window
+        // Loosen - expand destination distance window
         const next = Math.min(BOUNDS.rule3.destDistanceKm.max, currentDist + NUDGE_DEST_DISTANCE_KM);
         if (next !== currentDist) {
           this.rulesEngine.updateConfig({ rule3: { destDistanceKm: next } });
           adjustments.push(this._adj('Rule 3', 'destDistanceKm', currentDist, next,
-            `Recall ${(overallRecall * 100).toFixed(0)}% — expanding last-mile window`));
+            `Recall ${(overallRecall * 100).toFixed(0)}% - expanding last-mile window`));
         }
       }
 
     } else if (overallRecall < RECALL_LOW_THRESHOLD) {
-      // Rule 3 didn't fire at all — if recall is low, widen destination window (explore)
+      // Rule 3 didn't fire at all - if recall is low, widen destination window (explore)
       const currentDist = this.rulesEngine.config.rule3.destDistanceKm;
       const next = Math.min(BOUNDS.rule3.destDistanceKm.max, currentDist + NUDGE_DEST_DISTANCE_KM);
       if (next !== currentDist) {
         this.rulesEngine.updateConfig({ rule3: { destDistanceKm: next } });
         adjustments.push(this._adj('Rule 3', 'destDistanceKm', currentDist, next,
-          `Recall ${(overallRecall * 100).toFixed(0)}% — Rule 3 idle, expanding last-mile window`));
+          `Recall ${(overallRecall * 100).toFixed(0)}% - Rule 3 idle, expanding last-mile window`));
       }
     }
 
@@ -305,7 +305,7 @@ class AdaptiveTuner {
       const originalTTL = cached.ttl || 300;
 
       if (current > SPIKE_MULTIPLIER * ema) {
-        // Spike detected — extend TTL
+        // Spike detected - extend TTL
         const newTTL = Math.min(
           TTL_SPIKE_MAX_SECONDS,
           Math.round(originalTTL * TTL_SPIKE_MULTIPLIER)
@@ -316,7 +316,7 @@ class AdaptiveTuner {
             ttl: newTTL,
             triggeredRule: cached.triggeredRule,
             ruleName: cached.ruleName,
-            reason: `[Adaptive] TTL extended ${originalTTL}s→${newTTL}s — access spike (${current} queries vs EMA ${ema.toFixed(1)})`,
+            reason: `[Adaptive] TTL extended ${originalTTL}s→${newTTL}s - access spike (${current} queries vs EMA ${ema.toFixed(1)})`,
             priority: 'HIGH'
           });
           ttlAdjustments.push({
@@ -329,7 +329,7 @@ class AdaptiveTuner {
         }
 
       } else if (current < COOLING_MULTIPLIER * ema && ema > 2) {
-        // Cooling detected — shrink TTL
+        // Cooling detected - shrink TTL
         const newTTL = Math.max(
           TTL_COOLING_MIN_SECONDS,
           Math.round(originalTTL * TTL_COOLING_MULTIPLIER)
@@ -340,7 +340,7 @@ class AdaptiveTuner {
             ttl: newTTL,
             triggeredRule: cached.triggeredRule,
             ruleName: cached.ruleName,
-            reason: `[Adaptive] TTL reduced ${originalTTL}s→${newTTL}s — cooling (${current} queries vs EMA ${ema.toFixed(1)})`,
+            reason: `[Adaptive] TTL reduced ${originalTTL}s→${newTTL}s - cooling (${current} queries vs EMA ${ema.toFixed(1)})`,
             priority: cached.priority || 'MEDIUM'
           });
           ttlAdjustments.push({
@@ -356,24 +356,24 @@ class AdaptiveTuner {
 
     // ── Build round summary ───────────────────────────────────────────────────
     const summary = {
-      round:            this.roundNumber,
-      timestamp:        Date.now(),
-      totalPreCached:   Object.keys(preCached).length,
-      totalQueried:     totalQueried,
-      coveredByCache:   coveredByCache,
-      wastedPreCaches:  Object.values(preCached).filter(p => !p.queried).length,
-      hitRate:          totalQueried > 0
-                          ? parseFloat((coveredByCache / totalQueried).toFixed(3))
-                          : 0,
-      recall:           overallRecall,
+      round: this.roundNumber,
+      timestamp: Date.now(),
+      totalPreCached: Object.keys(preCached).length,
+      totalQueried: totalQueried,
+      coveredByCache: coveredByCache,
+      wastedPreCaches: Object.values(preCached).filter(p => !p.queried).length,
+      hitRate: totalQueried > 0
+        ? parseFloat((coveredByCache / totalQueried).toFixed(3))
+        : 0,
+      recall: overallRecall,
       rulePrecision,
       thresholdAdjustments: adjustments,
       ttlAdjustments,
       currentThresholds: {
         rule1_checkpointDistanceKm: this.rulesEngine.config.rule1.checkpointDistanceKm,
         rule2_accessCountThreshold: this.rulesEngine.config.rule2.accessCountThreshold,
-        rule3_valueThresholdUsd:    this.rulesEngine.config.rule3.valueThresholdUsd,
-        rule3_destDistanceKm:       this.rulesEngine.config.rule3.destDistanceKm
+        rule3_valueThresholdUsd: this.rulesEngine.config.rule3.valueThresholdUsd,
+        rule3_destDistanceKm: this.rulesEngine.config.rule3.destDistanceKm
       },
       frequencyEMA: { ...this.frequencyEMA }
     };
@@ -394,8 +394,8 @@ class AdaptiveTuner {
     return {
       rule1_checkpointDistanceKm: this.rulesEngine.config.rule1.checkpointDistanceKm,
       rule2_accessCountThreshold: this.rulesEngine.config.rule2.accessCountThreshold,
-      rule3_valueThresholdUsd:    this.rulesEngine.config.rule3.valueThresholdUsd,
-      rule3_destDistanceKm:       this.rulesEngine.config.rule3.destDistanceKm
+      rule3_valueThresholdUsd: this.rulesEngine.config.rule3.valueThresholdUsd,
+      rule3_destDistanceKm: this.rulesEngine.config.rule3.destDistanceKm
     };
   }
 
@@ -405,9 +405,9 @@ class AdaptiveTuner {
 
   reset() {
     this.frequencyEMA = {};
-    this._round       = this._emptyRound();
-    this.history      = [];
-    this.roundNumber  = 0;
+    this._round = this._emptyRound();
+    this.history = [];
+    this.roundNumber = 0;
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -416,9 +416,9 @@ class AdaptiveTuner {
 
   _emptyRound() {
     return {
-      preCached:  {}, // { assetId: { rule, ttl, cachedAt, queried } }
-      queried:    {}, // { assetId: { count, firstAt, lastAt } }
-      startedAt:  null
+      preCached: {}, // { assetId: { rule, ttl, cachedAt, queried } }
+      queried: {}, // { assetId: { count, firstAt, lastAt } }
+      startedAt: null
     };
   }
 

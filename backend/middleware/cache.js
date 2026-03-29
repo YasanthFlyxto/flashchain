@@ -43,14 +43,14 @@ const redis = require('redis');
 // Each parameter is independently configurable by supply chain managers
 // to reflect their industry, geography, and compliance requirements [W22][A21].
 //
-// Rule 1 — Checkpoint Proximity (20 km / 60 min)
+// Rule 1 - Checkpoint Proximity (20 km / 60 min)
 //   The WCO SAFE Framework (2005, rev. 2021) and the EU Import Control System (ICS2)
 //   mandate advance electronic cargo declarations before vessel/vehicle arrival at
 //   the border. At typical road freight speeds (~80 km/h), a 20 km window provides
-//   ~15 minutes of lead time — sufficient for a Redis pre-cache write to complete and
+//   ~15 minutes of lead time - sufficient for a Redis pre-cache write to complete and
 //   be served before the customs query arrives [T23][J25].
 //
-// Rule 2 — Multi-Stakeholder Access (>3 accesses, ≥2 orgs, 1-hour window)
+// Rule 2 - Multi-Stakeholder Access (>3 accesses, ≥2 orgs, 1-hour window)
 //   Agrawal et al. (2021) [A21] identify that simultaneous cross-organisation access
 //   to the same blockchain record is a reliable indicator of an active dispute,
 //   compliance audit, or regulatory investigation. The 3-access / 2-org threshold
@@ -59,46 +59,46 @@ const redis = require('redis');
 //   [S20] Shalaby, S. et al. (2020) "Performance Evaluation of Hyperledger Fabric."
 //         IEEE ICIoT, Doha, pp.608–613.
 //
-// Rule 3 — High-Value Near Destination ($50 k / 50 km)
+// Rule 3 - High-Value Near Destination ($50 k / 50 km)
 //   TAPA Freight Security Requirements (FSR 2020) classify the last-mile delivery zone
 //   as the highest-risk segment for cargo theft and documentation disputes. At $50 k+
 //   appraised value, delivery inspection involves customs valuation, insurance sign-off,
-//   and receiver verification — all of which trigger concurrent blockchain reads [A21].
+//   and receiver verification - all of which trigger concurrent blockchain reads [A21].
 //   The 50 km threshold covers typical metropolitan last-mile delivery zones.
 //
-// Rule 4 — Mid-Journey Exclusion (>200 km from checkpoint AND destination, ≤3 accesses)
+// Rule 4 - Mid-Journey Exclusion (>200 km from checkpoint AND destination, ≤3 accesses)
 //   Wang et al. (2022) [W22] demonstrate that indiscriminate pre-caching wastes edge
 //   compute and memory resources without latency benefit when assets are far from
 //   predictable access events. Bozkaya-Aras (2024) [B24] confirms that selective
 //   caching policies reduce cache pollution by up to 40% versus naive pre-fetch.
-//   This rule is an explicit negative policy — it prevents wasting Redis capacity on
+//   This rule is an explicit negative policy - it prevents wasting Redis capacity on
 //   shipments that are mid-transit with no imminent checkpoint or delivery event.
 
 const DEFAULT_CONFIG = {
   rule1: {
     enabled: true,
-    checkpointDistanceKm: 20,  // km — WCO SAFE Framework advance-filing lead time [T23]
-    etaMinutes: 60,             // min — covers query arrival before customs scan window [J25]
-    ttlMinutes: 30              // min — covers the checkpoint crossing duration
+    checkpointDistanceKm: 20,  // km - WCO SAFE Framework advance-filing lead time [T23]
+    etaMinutes: 60,             // min - covers query arrival before customs scan window [J25]
+    ttlMinutes: 30              // min - covers the checkpoint crossing duration
   },
   rule2: {
     enabled: true,
-    accessCountThreshold: 3,   // accesses — filters routine queries; targets dispute patterns [A21]
-    minOrganizations: 2,       // orgs — requires cross-MSP access to confirm multi-party event [S20]
-    windowHours: 1,            // h — aligns with typical dispute investigation burst window [A21]
-    ttlHours: 24               // h — dispute investigations typically resolve within 24h
+    accessCountThreshold: 3,   // accesses - filters routine queries; targets dispute patterns [A21]
+    minOrganizations: 2,       // orgs - requires cross-MSP access to confirm multi-party event [S20]
+    windowHours: 1,            // h - aligns with typical dispute investigation burst window [A21]
+    ttlHours: 24               // h - dispute investigations typically resolve within 24h
   },
   rule3: {
     enabled: true,
-    valueThresholdUsd: 50000,  // USD — TAPA FSR 2020 high-value cargo classification boundary
-    destDistanceKm: 50,        // km — metropolitan last-mile delivery zone radius [A21]
-    ttlMinutes: 45             // min — covers delivery inspection and sign-off window
+    valueThresholdUsd: 50000,  // USD - TAPA FSR 2020 high-value cargo classification boundary
+    destDistanceKm: 50,        // km - metropolitan last-mile delivery zone radius [A21]
+    ttlMinutes: 45             // min - covers delivery inspection and sign-off window
   },
   rule4: {
     enabled: true,
-    minCheckpointDistanceKm: 200, // km — below this = approaching; exclusion applies above [W22][B24]
-    minDestDistanceKm: 200,       // km — below this = near delivery; exclusion applies above [W22]
-    maxNormalAccesses: 3          // accesses/h — above this triggers Rule 2 instead [A21]
+    minCheckpointDistanceKm: 200, // km - below this = approaching; exclusion applies above [W22][B24]
+    minDestDistanceKm: 200,       // km - below this = near delivery; exclusion applies above [W22]
+    maxNormalAccesses: 3          // accesses/h - above this triggers Rule 2 instead [A21]
   }
 };
 
@@ -236,10 +236,10 @@ class SmartCache {
  * no imminent high-demand event, consistent with selective-caching efficiency findings
  * in Bozkaya-Aras (2024) [B24] and Wang et al. (2022) [W22].
  *
- * Rule 1: Checkpoint Proximity      — WCO SAFE Framework advance-filing requirement [T23][J25]
- * Rule 2: Multi-Stakeholder Access  — Dispute/audit access pattern documented in [A21][S20]
- * Rule 3: High-Value Near Dest      — Last-mile high-risk zone per TAPA FSR 2020 [A21]
- * Rule 4: Mid-Journey Exclusion     — Selective caching efficiency guard [W22][B24]
+ * Rule 1: Checkpoint Proximity      - WCO SAFE Framework advance-filing requirement [T23][J25]
+ * Rule 2: Multi-Stakeholder Access  - Dispute/audit access pattern documented in [A21][S20]
+ * Rule 3: High-Value Near Dest      - Last-mile high-risk zone per TAPA FSR 2020 [A21]
+ * Rule 4: Mid-Journey Exclusion     - Selective caching efficiency guard [W22][B24]
  *
  * Industry presets (General Logistics, Pharmaceutical, Food & Beverage) adjust thresholds
  * based on sector-specific compliance frameworks: EU GDP guidelines for pharma [G23],
@@ -321,7 +321,7 @@ class PreCachingRulesEngine {
 
     // ----------------------------------------
     // RULE 4: MID-JOURNEY EXCLUSION
-    // Evaluated first — explicit negative policy
+    // Evaluated first - explicit negative policy
     //
     // Wang et al. (2022) [W22] show that pre-caching assets far from any predictable
     // high-demand event inflates cache size without reducing user-facing latency.
@@ -339,7 +339,7 @@ class PreCachingRulesEngine {
           triggeredRule: 'Rule 4',
           ruleName: 'Mid-Journey Exclusion',
           ttl: 0,
-          reason: `Mid-journey shipment — checkpoint ${checkpointDistance}km away (threshold: >${rule4.minCheckpointDistanceKm}km), destination ${destDistance}km away (threshold: >${rule4.minDestDistanceKm}km), only ${recentCount} accesses/hour (threshold: ≤${rule4.maxNormalAccesses}). Pre-caching would waste resources.`,
+          reason: `Mid-journey shipment - checkpoint ${checkpointDistance}km away (threshold: >${rule4.minCheckpointDistanceKm}km), destination ${destDistance}km away (threshold: >${rule4.minDestDistanceKm}km), only ${recentCount} accesses/hour (threshold: ≤${rule4.maxNormalAccesses}). Pre-caching would waste resources.`,
           policyTag: 'IN_TRANSIT',
           priority: 'N/A'
         };
@@ -355,7 +355,7 @@ class PreCachingRulesEngine {
     // identify pre-fetching before predictable high-demand windows as the primary
     // blockchain latency reduction strategy. Javed & Mangues-Bafalluy (2025) [J25]
     // confirm smart contract read latency under concurrent multi-org load can exceed
-    // 2 seconds — pre-caching before the checkpoint query arrives eliminates this delay.
+    // 2 seconds - pre-caching before the checkpoint query arrives eliminates this delay.
     // ----------------------------------------
     if (rule1.enabled) {
       const checkpointRequiresDocs = asset.CheckpointRequiresDocs === true;
@@ -378,7 +378,7 @@ class PreCachingRulesEngine {
     //
     // Agrawal et al. (2021) [A21] document that simultaneous cross-organisation access
     // to the same blockchain traceability record is a reliable indicator of an active
-    // dispute, compliance audit, or regulatory investigation — events that generate
+    // dispute, compliance audit, or regulatory investigation - events that generate
     // burst blockchain query load. Shalaby et al. (2020) [S20] show that repeated
     // multi-MSP queries create measurable throughput degradation on Hyperledger Fabric.
     // Pre-caching for the duration of the investigation window (24h default) absorbs

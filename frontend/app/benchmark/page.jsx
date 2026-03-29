@@ -9,7 +9,7 @@ import {
 } from 'recharts';
 import {
   Play, CheckCircle, AlertTriangle, Zap,
-  Database, TrendingDown, Activity, RefreshCw, BarChart2
+  Database, TrendingDown, Activity, RefreshCw, BarChart2, Download
 } from 'lucide-react';
 
 const CONCURRENCY_LEVELS = [1, 5, 10, 20, 50, 100, 200];
@@ -20,11 +20,11 @@ const CONCURRENCY_LEVELS = [1, 5, 10, 20, 50, 100, 200];
 
 function StatBox({ label, value, sub, colour = 'gray' }) {
   const colours = {
-    cyan:  'bg-cyan-50  border-cyan-100  text-cyan-700',
+    cyan: 'bg-cyan-50  border-cyan-100  text-cyan-700',
     green: 'bg-green-50 border-green-100 text-green-700',
-    navy:  'bg-blue-50  border-blue-100  text-blue-800',
-    red:   'bg-red-50   border-red-100   text-red-700',
-    gray:  'bg-gray-50  border-gray-100  text-gray-700',
+    navy: 'bg-blue-50  border-blue-100  text-blue-800',
+    red: 'bg-red-50   border-red-100   text-red-700',
+    gray: 'bg-gray-50  border-gray-100  text-gray-700',
   };
   return (
     <div className={`rounded-xl border p-4 ${colours[colour]}`}>
@@ -87,7 +87,7 @@ function ChartTooltip({ active, payload, label }) {
 function ConcTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
   const blockchain = payload.find(p => p.dataKey === 'blockchain')?.value;
-  const cache      = payload.find(p => p.dataKey === 'cache')?.value;
+  const cache = payload.find(p => p.dataKey === 'cache')?.value;
   return (
     <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-xs">
       <p className="font-semibold text-gray-700 mb-1">{label} concurrent {label === '1' ? 'query' : 'queries'}</p>
@@ -108,29 +108,49 @@ function ConcTooltip({ active, payload, label }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function BenchmarkPage() {
-  const [loading,    setLoading]    = useState(false);
-  const [setting,    setSetting]    = useState(false);
-  const [error,      setError]      = useState(null);
-  const [results,    setResults]    = useState(null);
-  const [setupDone,  setSetupDone]  = useState(false);
-  const [setupLog,   setSetupLog]   = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [setting, setSetting] = useState(false);
+  const [error, setError] = useState(null);
+  const [results, setResults] = useState(null);
+  const [setupDone, setSetupDone] = useState(false);
+  const [setupLog, setSetupLog] = useState([]);
 
   // Concurrent load benchmark state
-  const [concResults,  setConcResults]  = useState([]);
-  const [concRunning,  setConcRunning]  = useState(false);
+  const [concResults, setConcResults] = useState([]);
+  const [concRunning, setConcRunning] = useState(false);
   const [concProgress, setConcProgress] = useState(null);
-  const [concError,    setConcError]    = useState(null);
-  const [customVal,    setCustomVal]    = useState('');
-  const [customRunning,setCustomRunning]= useState(false);
+  const [concError, setConcError] = useState(null);
+  const [customVal, setCustomVal] = useState('');
+  const [customRunning, setCustomRunning] = useState(false);
 
   // Sustained benchmark state
-  const [sustainedTps,      setSustainedTps]      = useState(50);
+  const [sustainedTps, setSustainedTps] = useState(50);
   const [sustainedDuration, setSustainedDuration] = useState(10);
-  const [fabricLoading,     setFabricLoading]     = useState(false);
-  const [cacheLoading,      setCacheLoading]      = useState(false);
-  const [sustainedError,    setSustainedError]    = useState(null);
-  const [fabricResults,     setFabricResults]     = useState(null);
-  const [cacheResults,      setCacheResults]      = useState(null);
+  const [fabricLoading, setFabricLoading] = useState(false);
+  const [cacheLoading, setCacheLoading] = useState(false);
+  const [sustainedError, setSustainedError] = useState(null);
+  const [fabricResults, setFabricResults] = useState(null);
+  const [cacheResults, setCacheResults] = useState(null);
+
+  // Formal evaluation state
+  const [evalTrials, setEvalTrials] = useState(5);
+  const [evalLoading, setEvalLoading] = useState(false);
+  const [evalResult, setEvalResult] = useState(null);
+  const [evalError, setEvalError] = useState(null);
+
+  const runEvaluation = async () => {
+    setEvalLoading(true);
+    setEvalError(null);
+    setEvalResult(null);
+    try {
+      const data = await api.runEvaluation(evalTrials);
+      setEvalResult(data);
+    } catch (err) {
+      setEvalError(err.response?.data?.error || err.message);
+    } finally {
+      setEvalLoading(false);
+    }
+  };
 
   // ── Concurrent load benchmark ─────────────────────────────────────────────
   const runConcBenchmark = async () => {
@@ -246,81 +266,81 @@ export default function BenchmarkPage() {
 
   // ── Derived chart data ────────────────────────────────────────────────────
 
-  // Section 1: 3-way comparison — average latency per round
+  // Section 1: 3-way comparison - average latency per round
   const comparisonData = results
     ? results.comparison.noCache.map((nc, i) => ({
-        round:      `R${nc.round}`,
-        'No Cache': nc.avgLatencyMs,
-        'Naive':    results.comparison.naive[i]?.avgLatencyMs,
-        'Smart':    results.comparison.smart[i]?.avgLatencyMs,
-      }))
+      round: `R${nc.round}`,
+      'No Cache': nc.avgLatencyMs,
+      'Naive': results.comparison.naive[i]?.avgLatencyMs,
+      'Smart': results.comparison.smart[i]?.avgLatencyMs,
+    }))
     : [];
 
   // Section 1: blockchain calls per round
   const blockchainCallsData = results
     ? results.comparison.noCache.map((nc, i) => ({
-        round:      `R${nc.round}`,
-        'No Cache': nc.blockchainCalls,
-        'Naive':    results.comparison.naive[i]?.blockchainCalls,
-        'Smart':    results.comparison.smart[i]?.blockchainCalls,
-      }))
+      round: `R${nc.round}`,
+      'No Cache': nc.blockchainCalls,
+      'Naive': results.comparison.naive[i]?.blockchainCalls,
+      'Smart': results.comparison.smart[i]?.blockchainCalls,
+    }))
     : [];
 
-  // Section 2: hit rate — static vs adaptive over 10 rounds
+  // Section 2: hit rate - static vs adaptive over 10 rounds
   const hitRateData = results
     ? results.adaptive.staticRounds.map((s, i) => ({
-        round:      `R${s.round}`,
-        Static:     parseFloat((s.hitRate * 100).toFixed(1)),
-        Adaptive:   parseFloat((results.adaptive.adaptiveRounds[i]?.hitRate * 100).toFixed(1)),
-      }))
+      round: `R${s.round}`,
+      Static: parseFloat((s.hitRate * 100).toFixed(1)),
+      Adaptive: parseFloat((results.adaptive.adaptiveRounds[i]?.hitRate * 100).toFixed(1)),
+    }))
     : [];
 
-  // Section 2: blockchain calls per round — static vs adaptive
+  // Section 2: blockchain calls per round - static vs adaptive
   const bcCallsAdaptiveData = results
     ? results.adaptive.staticRounds.map((s, i) => ({
-        round:      `R${s.round}`,
-        Static:     s.blockchainCalls,
-        Adaptive:   results.adaptive.adaptiveRounds[i]?.blockchainCalls,
-      }))
+      round: `R${s.round}`,
+      Static: s.blockchainCalls,
+      Adaptive: results.adaptive.adaptiveRounds[i]?.blockchainCalls,
+    }))
     : [];
 
-  // Section 2: threshold drift — Rule 1 checkpointDistanceKm over rounds
+  // Section 2: threshold drift - Rule 1 checkpointDistanceKm over rounds
   const thresholdDriftData = results
     ? results.adaptive.adaptiveRounds.map(r => ({
-        round:    `R${r.round}`,
-        'Rule 1 Distance (km)': r.currentThresholds?.rule1_checkpointDistanceKm,
-        'Rule 3 Dest (km)':     r.currentThresholds?.rule3_destDistanceKm,
-      }))
+      round: `R${r.round}`,
+      'Rule 1 Distance (km)': r.currentThresholds?.rule1_checkpointDistanceKm,
+      'Rule 3 Dest (km)': r.currentThresholds?.rule3_destDistanceKm,
+    }))
     : [];
 
   // Summary numbers
-  const smartAvgLatency    = results
+  const smartAvgLatency = results
     ? (results.comparison.smart.reduce((s, r) => s + r.avgLatencyMs, 0) / results.comparison.smart.length).toFixed(1)
-    : '—';
-  const noCacheAvgLatency  = results
+    : '-';
+  const noCacheAvgLatency = results
     ? (results.comparison.noCache.reduce((s, r) => s + r.avgLatencyMs, 0) / results.comparison.noCache.length).toFixed(1)
-    : '—';
-  const latencyReduction   = results
+    : '-';
+  const latencyReduction = results
     ? Math.round((1 - smartAvgLatency / noCacheAvgLatency) * 100)
-    : '—';
+    : '-';
 
-  const totalStaticBC   = results ? results.adaptive.staticRounds.reduce((s, r) => s + r.blockchainCalls, 0)   : '—';
-  const totalAdaptiveBC = results ? results.adaptive.adaptiveRounds.reduce((s, r) => s + r.blockchainCalls, 0) : '—';
-  const bcSaved         = results ? Math.round((1 - totalAdaptiveBC / totalStaticBC) * 100) : '—';
+  const totalStaticBC = results ? results.adaptive.staticRounds.reduce((s, r) => s + r.blockchainCalls, 0) : '-';
+  const totalAdaptiveBC = results ? results.adaptive.adaptiveRounds.reduce((s, r) => s + r.blockchainCalls, 0) : '-';
+  const bcSaved = results ? Math.round((1 - totalAdaptiveBC / totalStaticBC) * 100) : '-';
 
   const disruptionRound = results?.adaptive?.disruptionRound ?? null;
   const roundsToRecover = results && disruptionRound
     ? (() => {
-        const postDisruption = results.adaptive.adaptiveRounds.filter(r => r.round > disruptionRound);
-        const recoveryRound  = postDisruption.find(r => r.hitRate >= 0.70);
-        return recoveryRound ? recoveryRound.round - disruptionRound : null;
-      })()
+      const postDisruption = results.adaptive.adaptiveRounds.filter(r => r.round > disruptionRound);
+      const recoveryRound = postDisruption.find(r => r.hitRate >= 0.70);
+      return recoveryRound ? recoveryRound.round - disruptionRound : null;
+    })()
     : null;
 
   const allAdjustments = results
     ? results.adaptive.adaptiveRounds.flatMap(r =>
-        (r.thresholdAdjustments || []).map(a => ({ ...a, round: r.round }))
-      )
+      (r.thresholdAdjustments || []).map(a => ({ ...a, round: r.round }))
+    )
     : [];
 
   return (
@@ -330,7 +350,7 @@ export default function BenchmarkPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Benchmark Suite</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Pharmaceutical supply chain simulation — evaluating context-aware caching effectiveness and adaptive policy tuning.
+          Pharmaceutical supply chain simulation - evaluating context-aware caching effectiveness and adaptive policy tuning.
         </p>
       </div>
 
@@ -338,7 +358,7 @@ export default function BenchmarkPage() {
       <div className="bg-white rounded-2xl border border-gray-200 p-6">
         <SectionHeader
           icon={Database}
-          title="Step 1 — Setup Pharma Shipments"
+          title="Step 1 - Setup Pharma Shipments"
           subtitle="Creates 6 controlled pharmaceutical shipments on the Fabric ledger. Each is positioned to trigger a specific policy rule."
         />
 
@@ -361,11 +381,10 @@ export default function BenchmarkPage() {
             {setupLog.map(s => (
               <div key={s.id} className="flex items-center justify-between px-4 py-2 text-sm">
                 <span className="font-mono font-medium text-gray-700">{s.id}</span>
-                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                  s.status === 'created'        ? 'bg-green-100 text-green-700' :
-                  s.status === 'already_exists' ? 'bg-blue-100  text-blue-700'  :
-                                                  'bg-red-100   text-red-700'
-                }`}>
+                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${s.status === 'created' ? 'bg-green-100 text-green-700' :
+                    s.status === 'already_exists' ? 'bg-blue-100  text-blue-700' :
+                      'bg-red-100   text-red-700'
+                  }`}>
                   {s.status}
                 </span>
               </div>
@@ -380,7 +399,7 @@ export default function BenchmarkPage() {
           <SectionHeader
             icon={BarChart2}
             title="Concurrent Load Benchmark"
-            subtitle="Fires N simultaneous queries via Promise.all — shows how Fabric latency climbs under burst load while Redis stays flat."
+            subtitle="Fires N simultaneous queries via Promise.all - shows how Fabric latency climbs under burst load while Redis stays flat."
           />
           <button
             onClick={runConcBenchmark}
@@ -458,7 +477,7 @@ export default function BenchmarkPage() {
                 <Tooltip content={<ConcTooltip />} />
                 <Legend verticalAlign="top" height={36} />
                 <Line type="monotone" dataKey="blockchain" name="Fabric (Blockchain)" stroke="#1e3a5f" strokeWidth={2.5} dot={{ r: 5, fill: '#1e3a5f' }} activeDot={{ r: 7 }} />
-                <Line type="monotone" dataKey="cache"      name="Redis (Cache)"      stroke="#06b6d4" strokeWidth={2.5} dot={{ r: 5, fill: '#06b6d4' }} activeDot={{ r: 7 }} />
+                <Line type="monotone" dataKey="cache" name="Redis (Cache)" stroke="#06b6d4" strokeWidth={2.5} dot={{ r: 5, fill: '#06b6d4' }} activeDot={{ r: 7 }} />
                 {concResults.length > 0 && <ReferenceLine y={100} stroke="#f59e0b" strokeDasharray="4 4" label={{ value: '100ms threshold', position: 'right', fontSize: 10, fill: '#f59e0b' }} />}
               </LineChart>
             </ResponsiveContainer>
@@ -498,7 +517,7 @@ export default function BenchmarkPage() {
       <div className="bg-white rounded-2xl border border-gray-200 p-6">
         <SectionHeader
           icon={Play}
-          title="Step 2 — Run Simulation"
+          title="Step 2 - Run Simulation"
           subtitle="Runs the full benchmark. Takes ~60–90 seconds. Do not refresh."
         />
 
@@ -506,7 +525,7 @@ export default function BenchmarkPage() {
           onClick={handleSimulate}
           loading={loading}
           label="Run Full Simulation"
-          loadingLabel="Simulating — please wait..."
+          loadingLabel="Simulating - please wait..."
         />
 
         {loading && (
@@ -530,8 +549,8 @@ export default function BenchmarkPage() {
           <div className="bg-white rounded-2xl border border-gray-200 p-6 space-y-6">
             <SectionHeader
               icon={Zap}
-              title="Experiment 1 — Cache Effectiveness"
-              subtitle="Same workload in 3 modes: no cache, naive cache (fixed TTL), smart cache (policy rules). Smart pre-caches before demand arrives — naive only caches reactively."
+              title="Experiment 1 - Cache Effectiveness"
+              subtitle="Same workload in 3 modes: no cache, naive cache (fixed TTL), smart cache (policy rules). Smart pre-caches before demand arrives - naive only caches reactively."
             />
 
             {/* Summary stats */}
@@ -572,9 +591,9 @@ export default function BenchmarkPage() {
                   <YAxis tick={{ fontSize: 12 }} unit="ms" />
                   <Tooltip content={<ChartTooltip />} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Bar dataKey="No Cache" fill="#94a3b8" radius={[4,4,0,0]} />
-                  <Bar dataKey="Naive"    fill="#f59e0b" radius={[4,4,0,0]} />
-                  <Bar dataKey="Smart"    fill="#06b6d4" radius={[4,4,0,0]} />
+                  <Bar dataKey="No Cache" fill="#94a3b8" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Naive" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Smart" fill="#06b6d4" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -589,9 +608,9 @@ export default function BenchmarkPage() {
                   <YAxis tick={{ fontSize: 12 }} />
                   <Tooltip content={<ChartTooltip />} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Bar dataKey="No Cache" fill="#94a3b8" radius={[4,4,0,0]} />
-                  <Bar dataKey="Naive"    fill="#f59e0b" radius={[4,4,0,0]} />
-                  <Bar dataKey="Smart"    fill="#06b6d4" radius={[4,4,0,0]} />
+                  <Bar dataKey="No Cache" fill="#94a3b8" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Naive" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Smart" fill="#06b6d4" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -601,7 +620,7 @@ export default function BenchmarkPage() {
           <div className="bg-white rounded-2xl border border-gray-200 p-6 space-y-6">
             <SectionHeader
               icon={Activity}
-              title="Experiment 2 — Adaptive Self-Healing"
+              title="Experiment 2 - Adaptive Self-Healing"
               subtitle="Normal operation (R1–R3) → misconfiguration injected (R4) → adaptive self-heals (R5–R8) vs static degradation. The adaptive tuner detects the recall drop and recovers; static rules stay degraded."
             />
 
@@ -627,7 +646,7 @@ export default function BenchmarkPage() {
               />
               <StatBox
                 label="Rounds to Recover"
-                value={roundsToRecover !== null ? `${roundsToRecover}` : '—'}
+                value={roundsToRecover !== null ? `${roundsToRecover}` : '-'}
                 sub={`adaptive ≥70% hit rate after R${disruptionRound}`}
                 colour="gray"
               />
@@ -651,7 +670,7 @@ export default function BenchmarkPage() {
                       label={{ value: 'Misconfiguration', position: 'top', fontSize: 10, fill: '#ef4444' }}
                     />
                   )}
-                  <Line type="monotone" dataKey="Static"   stroke="#94a3b8" strokeWidth={2} dot={{ r: 4 }} />
+                  <Line type="monotone" dataKey="Static" stroke="#94a3b8" strokeWidth={2} dot={{ r: 4 }} />
                   <Line type="monotone" dataKey="Adaptive" stroke="#06b6d4" strokeWidth={2.5} dot={{ r: 4 }} />
                 </LineChart>
               </ResponsiveContainer>
@@ -659,7 +678,7 @@ export default function BenchmarkPage() {
 
             {/* Blockchain calls: static vs adaptive */}
             <div>
-              <p className="text-sm font-semibold text-gray-700 mb-3">Blockchain Calls per Round — Static vs Adaptive</p>
+              <p className="text-sm font-semibold text-gray-700 mb-3">Blockchain Calls per Round - Static vs Adaptive</p>
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={bcCallsAdaptiveData} barCategoryGap="30%">
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -667,8 +686,8 @@ export default function BenchmarkPage() {
                   <YAxis tick={{ fontSize: 12 }} />
                   <Tooltip content={<ChartTooltip />} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Bar dataKey="Static"   fill="#94a3b8" radius={[4,4,0,0]} />
-                  <Bar dataKey="Adaptive" fill="#06b6d4" radius={[4,4,0,0]} />
+                  <Bar dataKey="Static" fill="#94a3b8" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Adaptive" fill="#06b6d4" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -693,7 +712,7 @@ export default function BenchmarkPage() {
                       />
                     )}
                     <Line type="monotone" dataKey="Rule 1 Distance (km)" stroke="#06b6d4" strokeWidth={2} dot={{ r: 3 }} />
-                    <Line type="monotone" dataKey="Rule 3 Dest (km)"     stroke="#8b5cf6" strokeWidth={2} dot={{ r: 3 }} />
+                    <Line type="monotone" dataKey="Rule 3 Dest (km)" stroke="#8b5cf6" strokeWidth={2} dot={{ r: 3 }} />
                   </LineChart>
                 </ResponsiveContainer>
                 <p className="text-xs text-gray-400 mt-1">
@@ -732,7 +751,7 @@ export default function BenchmarkPage() {
 
             {allAdjustments.length === 0 && results && (
               <div className="rounded-lg bg-gray-50 border border-gray-100 p-4 text-sm text-gray-500 text-center">
-                No threshold adjustments made — rules were well-calibrated for this workload.
+                No threshold adjustments made - rules were well-calibrated for this workload.
               </div>
             )}
           </div>
@@ -769,23 +788,21 @@ export default function BenchmarkPage() {
                           )}
                         </td>
                         <td className="py-2 pr-4 text-gray-600">{(s.hitRate * 100).toFixed(0)}%</td>
-                        <td className={`py-2 pr-4 font-semibold ${
-                          a?.hitRate > s.hitRate ? 'text-cyan-600' : 'text-gray-600'
-                        }`}>
+                        <td className={`py-2 pr-4 font-semibold ${a?.hitRate > s.hitRate ? 'text-cyan-600' : 'text-gray-600'
+                          }`}>
                           {(a?.hitRate * 100).toFixed(0)}%
                           {a?.hitRate > s.hitRate && ' ↑'}
                         </td>
                         <td className="py-2 pr-4 text-gray-600">{s.blockchainCalls}</td>
-                        <td className={`py-2 pr-4 font-semibold ${
-                          a?.blockchainCalls < s.blockchainCalls ? 'text-cyan-600' : 'text-gray-600'
-                        }`}>
+                        <td className={`py-2 pr-4 font-semibold ${a?.blockchainCalls < s.blockchainCalls ? 'text-cyan-600' : 'text-gray-600'
+                          }`}>
                           {a?.blockchainCalls}
                           {a?.blockchainCalls < s.blockchainCalls && ' ↓'}
                         </td>
                         <td className="py-2 text-xs text-gray-500">
                           {(a?.thresholdAdjustments?.length || 0) > 0
                             ? <span className="text-cyan-600 font-semibold">{a.thresholdAdjustments.length} adj.</span>
-                            : '—'
+                            : '-'
                           }
                         </td>
                       </tr>
@@ -803,7 +820,7 @@ export default function BenchmarkPage() {
         <SectionHeader
           icon={Activity}
           title="Caliper-Like Sustained Rate Test"
-          subtitle="Fires queries at a fixed TPS rate continuously — new queries fire on schedule regardless of whether previous ones finished. Models real-world automated systems under sustained load."
+          subtitle="Fires queries at a fixed TPS rate continuously - new queries fire on schedule regardless of whether previous ones finished. Models real-world automated systems under sustained load."
         />
 
         {/* Controls */}
@@ -845,7 +862,7 @@ export default function BenchmarkPage() {
         </div>
 
         <p className="text-xs text-gray-400">
-          Run each test separately — {sustainedTps * sustainedDuration} total queries at {sustainedTps} queries/sec for {sustainedDuration}s
+          Run each test separately - {sustainedTps * sustainedDuration} total queries at {sustainedTps} queries/sec for {sustainedDuration}s
         </p>
 
         {sustainedError && (
@@ -890,11 +907,146 @@ export default function BenchmarkPage() {
           </div>
         </div>
 
-        {/* Summary — only shown when both results available */}
+        {/* Summary - only shown when both results available */}
         {fabricResults && cacheResults && (
           <div className="rounded-lg bg-green-50 border border-green-100 px-4 py-3 text-sm text-green-700 font-semibold">
             Redis is {Math.round((1 - cacheResults.avg / fabricResults.avg) * 100)}% faster on average ·
             p99 reduction: {fabricResults.p99}ms → {cacheResults.p99}ms
+          </div>
+        )}
+      </div>
+
+      {/* ═══════════════════════════════════════════════════════════════════════
+          SECTION 5 - FORMAL EVALUATION (multi-trial with statistics)
+          ═══════════════════════════════════════════════════════════════════════ */}
+      <div className="rounded-2xl bg-white border border-gray-100 shadow-sm p-6">
+        <SectionHeader
+          icon={BarChart2}
+          title="Formal Evaluation"
+          subtitle="Multi-trial 3-way comparison with mean ± stddev ± 95% CI - for thesis tables"
+        />
+
+        <div className="flex items-center gap-4 mb-4">
+          <label className="text-sm text-gray-600">Trials:</label>
+          <input
+            type="number"
+            min={1}
+            max={10}
+            value={evalTrials}
+            onChange={e => setEvalTrials(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
+            className="w-20 rounded-lg border border-gray-200 px-3 py-2 text-sm"
+          />
+          <RunButton
+            onClick={runEvaluation}
+            loading={evalLoading}
+            label="Run Evaluation"
+            loadingLabel={`Running ${evalTrials} trials...`}
+          />
+          {evalResult && (
+            <div className="flex items-center gap-2 ml-auto">
+              <button
+                onClick={() => api.exportResultsCsv()}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-gray-700 text-white hover:bg-gray-800 transition-colors"
+              >
+                <Download size={13} /> CSV
+              </button>
+              <button
+                onClick={() => api.exportResultsJson()}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                <Download size={13} /> JSON
+              </button>
+            </div>
+          )}
+        </div>
+
+        {evalError && (
+          <div className="rounded-lg bg-red-50 border border-red-100 px-4 py-3 text-sm text-red-700 mb-4">
+            <AlertTriangle size={14} className="inline mr-1" /> {evalError}
+          </div>
+        )}
+
+        {evalLoading && (
+          <div className="text-sm text-cyan-600 animate-pulse">
+            Running {evalTrials}-trial evaluation... Each trial runs 3 strategies × 3 rounds. This may take a few minutes.
+          </div>
+        )}
+
+        {evalResult && evalResult.summary && (
+          <div className="space-y-4">
+            {/* Summary table */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border border-gray-200 rounded-lg">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2.5 text-left font-semibold text-gray-700">Strategy</th>
+                    <th className="px-4 py-2.5 text-right font-semibold text-gray-700">Mean Latency (ms)</th>
+                    <th className="px-4 py-2.5 text-right font-semibold text-gray-700">± StdDev</th>
+                    <th className="px-4 py-2.5 text-right font-semibold text-gray-700">95% CI</th>
+                    <th className="px-4 py-2.5 text-right font-semibold text-gray-700">Hit Rate</th>
+                    <th className="px-4 py-2.5 text-right font-semibold text-gray-700">BC Calls</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { label: 'No-Cache', lat: evalResult.summary.noCacheLatency, hr: null, bc: evalResult.summary.noCacheBcCalls, colour: 'text-red-700' },
+                    { label: 'Naive (5min TTL)', lat: evalResult.summary.naiveLatency, hr: evalResult.summary.naiveHitRate, bc: evalResult.summary.naiveBcCalls, colour: 'text-amber-700' },
+                    { label: 'Smart (Policy)', lat: evalResult.summary.smartLatency, hr: evalResult.summary.smartHitRate, bc: evalResult.summary.smartBcCalls, colour: 'text-cyan-700' },
+                  ].map(row => (
+                    <tr key={row.label} className="border-t border-gray-100">
+                      <td className={`px-4 py-2.5 font-semibold ${row.colour}`}>{row.label}</td>
+                      <td className="px-4 py-2.5 text-right font-mono">{row.lat.mean}</td>
+                      <td className="px-4 py-2.5 text-right font-mono text-gray-500">{row.lat.stddev}</td>
+                      <td className="px-4 py-2.5 text-right font-mono text-gray-500">±{row.lat.ci95}</td>
+                      <td className="px-4 py-2.5 text-right font-mono">{row.hr ? `${(row.hr.mean * 100).toFixed(1)}%` : '0%'}</td>
+                      <td className="px-4 py-2.5 text-right font-mono">{row.bc.mean}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Headline stats */}
+            <div className="grid grid-cols-3 gap-3">
+              <StatBox label="Speedup Factor" value={`${evalResult.summary.speedupFactor}×`} colour="green" />
+              <StatBox label="Latency Reduction" value={`${evalResult.summary.latencyReductionPct}%`} colour="cyan" />
+              <StatBox label="Trials" value={evalResult.trials} sub="independent runs" colour="navy" />
+            </div>
+
+            {/* Per-trial details (collapsible) */}
+            <details className="text-sm">
+              <summary className="cursor-pointer text-gray-500 hover:text-gray-700 font-medium">
+                View per-trial raw data ({evalResult.trials} trials × 3 rounds)
+              </summary>
+              <div className="mt-2 overflow-x-auto">
+                <table className="w-full text-xs border border-gray-200 rounded-lg">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Trial</th>
+                      <th className="px-3 py-2 text-left">Round</th>
+                      <th className="px-3 py-2 text-right">No-Cache (ms)</th>
+                      <th className="px-3 py-2 text-right">Naive (ms)</th>
+                      <th className="px-3 py-2 text-right">Smart (ms)</th>
+                      <th className="px-3 py-2 text-right">Smart Hit Rate</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {evalResult.perTrial.map((trial, ti) =>
+                      trial.noCache.map((nc, ri) => (
+                        <tr key={`${ti}-${ri}`} className="border-t border-gray-50">
+                          <td className="px-3 py-1.5">{ti + 1}</td>
+                          <td className="px-3 py-1.5">{ri + 1}</td>
+                          <td className="px-3 py-1.5 text-right font-mono">{nc.avgLatencyMs}</td>
+                          <td className="px-3 py-1.5 text-right font-mono">{trial.naive[ri].avgLatencyMs}</td>
+                          <td className="px-3 py-1.5 text-right font-mono">{trial.smart[ri].avgLatencyMs}</td>
+                          <td className="px-3 py-1.5 text-right font-mono">{(trial.smart[ri].hitRate * 100).toFixed(1)}%</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </details>
           </div>
         )}
       </div>

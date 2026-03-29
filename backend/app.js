@@ -17,7 +17,7 @@ const AdaptiveTuner = require('./middleware/adaptiveTuner');
 const INDUSTRY_PRESETS = {
   'general-logistics': {
     label: 'General Logistics',
-    description: 'Standard logistics operations — balanced thresholds for most supply chains',
+    description: 'Standard logistics operations - balanced thresholds for most supply chains',
     rule1: { checkpointDistanceKm: 20, etaMinutes: 60, ttlMinutes: 30 },
     rule2: { accessCountThreshold: 3, minOrganizations: 2, windowHours: 1, ttlHours: 24 },
     rule3: { valueThresholdUsd: 50000, destDistanceKm: 50, ttlMinutes: 45 },
@@ -25,7 +25,7 @@ const INDUSTRY_PRESETS = {
   },
   'pharmaceutical': {
     label: 'Pharmaceutical',
-    description: 'Temperature-sensitive, high-compliance cargo — wider proximity windows, stricter access detection',
+    description: 'Temperature-sensitive, high-compliance cargo - wider proximity windows, stricter access detection',
     rule1: { checkpointDistanceKm: 30, etaMinutes: 90, ttlMinutes: 60 },
     rule2: { accessCountThreshold: 2, minOrganizations: 2, windowHours: 1, ttlHours: 48 },
     rule3: { valueThresholdUsd: 10000, destDistanceKm: 100, ttlMinutes: 60 },
@@ -33,7 +33,7 @@ const INDUSTRY_PRESETS = {
   },
   'food-beverage': {
     label: 'Food & Beverage',
-    description: 'Perishable goods — tight time windows, aggressive caching for freshness compliance',
+    description: 'Perishable goods - tight time windows, aggressive caching for freshness compliance',
     rule1: { checkpointDistanceKm: 10, etaMinutes: 30, ttlMinutes: 15 },
     rule2: { accessCountThreshold: 5, minOrganizations: 3, windowHours: 1, ttlHours: 12 },
     rule3: { valueThresholdUsd: 100000, destDistanceKm: 30, ttlMinutes: 30 },
@@ -55,7 +55,7 @@ let workerInterval = null;
 // Initialize Pre-Caching Rules Engine
 const preCacheRules = new PreCachingRulesEngine();
 
-// Initialize Adaptive Tuner — wired to rules engine + cache
+// Initialize Adaptive Tuner - wired to rules engine + cache
 const adaptiveTuner = new AdaptiveTuner(preCacheRules, smartCache);
 
 // Track access patterns for Rule 2 (multi-stakeholder detection)
@@ -63,6 +63,49 @@ const accessLog = {};
 
 // Pre-caching activity log
 let preCacheActivity = [];
+
+// Last evaluation result (for CSV/JSON export)
+let lastEvaluationResult = null;
+
+// ========================================
+// STATISTICS HELPER
+// ========================================
+
+function calcStats(arr) {
+  const n = arr.length;
+  if (n === 0) return null;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const avg = arr.reduce((s, v) => s + v, 0) / n;
+  const variance = arr.reduce((s, v) => s + (v - avg) ** 2, 0) / n;
+  const stddev = Math.sqrt(variance);
+  const ci95 = 1.96 * (stddev / Math.sqrt(n));
+  return {
+    avg: parseFloat(avg.toFixed(2)),
+    stddev: parseFloat(stddev.toFixed(2)),
+    ci95: parseFloat(ci95.toFixed(2)),
+    p50: parseFloat((sorted[Math.floor(n * 0.50)] ?? sorted[n - 1]).toFixed(2)),
+    p95: parseFloat((sorted[Math.floor(n * 0.95)] ?? sorted[n - 1]).toFixed(2)),
+    p99: parseFloat((sorted[Math.floor(n * 0.99)] ?? sorted[n - 1]).toFixed(2)),
+    min: parseFloat(sorted[0].toFixed(2)),
+    max: parseFloat(sorted[n - 1].toFixed(2)),
+    count: n,
+  };
+}
+
+// Helper: compute mean +/- stddev +/- ci95 across an array of numbers
+function meanStd(arr) {
+  const n = arr.length;
+  if (n === 0) return null;
+  const mean = arr.reduce((s, v) => s + v, 0) / n;
+  const std = Math.sqrt(arr.reduce((s, v) => s + (v - mean) ** 2, 0) / n);
+  const ci95 = 1.96 * (std / Math.sqrt(n));
+  return {
+    mean: parseFloat(mean.toFixed(3)),
+    stddev: parseFloat(std.toFixed(3)),
+    ci95: parseFloat(ci95.toFixed(3)),
+    n
+  };
+}
 
 // ========================================
 // ASSET ENRICHMENT FUNCTION
@@ -89,14 +132,14 @@ function enrichAssetWithLocation(asset) {
   let checkpointRequiresDocs = false;
 
   // Deterministic display metadata for all assets (derived from ID hash)
-  const ORIGINS      = ['Mumbai', 'Singapore', 'Shanghai', 'Dubai', 'Los Angeles', 'Hamburg'];
+  const ORIGINS = ['Mumbai', 'Singapore', 'Shanghai', 'Dubai', 'Los Angeles', 'Hamburg'];
   const DESTINATIONS = ['Rotterdam', 'Antwerp', 'New York', 'Sydney', 'London', 'Frankfurt'];
-  const CONSIGNEES   = ['Unilever Europe', 'IKEA Logistics', 'Pfizer Supply', 'Samsung Distribution', 'Amazon EU'];
+  const CONSIGNEES = ['Unilever Europe', 'IKEA Logistics', 'Pfizer Supply', 'Samsung Distribution', 'Amazon EU'];
   const _hash = crypto.createHash('md5').update(asset.ID).digest('hex');
   const _seed = parseInt(_hash.substring(0, 4), 16);
-  const origin      = ORIGINS[_seed % ORIGINS.length];
+  const origin = ORIGINS[_seed % ORIGINS.length];
   const destination = DESTINATIONS[(_seed * 3 + 1) % DESTINATIONS.length];
-  const consignee   = CONSIGNEES[(_seed * 7 + 2) % CONSIGNEES.length];
+  const consignee = CONSIGNEES[(_seed * 7 + 2) % CONSIGNEES.length];
 
   if (isTestAsset) {
     // Controlled distances for test assets
@@ -235,7 +278,7 @@ async function runBackgroundPrecacheWorker() {
     activities: [],
     inTransitCount: 0,
     disputedCount: 0,
-    alreadyCached: 0 
+    alreadyCached: 0
   };
 
   try {
@@ -980,7 +1023,7 @@ async function startServer() {
 // ADAPTIVE TUNER ENDPOINTS
 // ========================================
 
-// Get full adaptive tuner history — per-round precision/recall, adjustments, threshold drift
+// Get full adaptive tuner history - per-round precision/recall, adjustments, threshold drift
 app.get('/api/adaptive/history', (_req, res) => {
   res.json({
     success: true,
@@ -1012,7 +1055,7 @@ app.post('/api/adaptive/end-round', async (_req, res) => {
 // BENCHMARK ENDPOINT
 // ========================================
 
-// Single random asset query — fetches one random asset from blockchain then cache, returns raw latency.
+// Single random asset query - fetches one random asset from blockchain then cache, returns raw latency.
 app.post('/api/benchmark/single', async (_req, res) => {
   try {
     const allResult = await contract.evaluateTransaction('GetAllAssets');
@@ -1090,18 +1133,6 @@ app.post('/api/benchmark/run', async (req, res) => {
       })
     );
 
-    const calcStats = (arr) => {
-      const sorted = [...arr].sort((a, b) => a - b);
-      const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
-      return {
-        avg: parseFloat(avg.toFixed(2)),
-        p95: parseFloat((sorted[Math.floor(sorted.length * 0.95)] ?? sorted[sorted.length - 1]).toFixed(2)),
-        p99: parseFloat((sorted[Math.floor(sorted.length * 0.99)] ?? sorted[sorted.length - 1]).toFixed(2)),
-        min: parseFloat(sorted[0].toFixed(2)),
-        max: parseFloat(sorted[sorted.length - 1].toFixed(2)),
-      };
-    };
-
     res.json({
       success: true,
       concurrency,
@@ -1120,7 +1151,7 @@ app.post('/api/benchmark/run', async (req, res) => {
 //
 // Unlike /api/benchmark/run which fires a single burst of N queries,
 // this endpoint sustains a fixed query rate (TPS) for a set duration.
-// New queries fire on schedule regardless of whether previous ones finished —
+// New queries fire on schedule regardless of whether previous ones finished -
 // exactly how Caliper and real-world automated systems behave.
 // This creates genuine backpressure on Fabric when throughput < send rate.
 
@@ -1143,12 +1174,12 @@ app.post('/api/benchmark/sustained', async (req, res) => {
       ruleName: 'Benchmark', reason: 'Sustained benchmark warm-up', priority: 'HIGH'
     });
 
-    const intervalMs   = 1000 / tps;
+    const intervalMs = 1000 / tps;
     const totalQueries = tps * durationSeconds;
-    const target       = req.body.target || 'both'; // 'fabric', 'cache', or 'both'
+    const target = req.body.target || 'both'; // 'fabric', 'cache', or 'both'
 
     // Helper: run one target at sustained rate using setInterval.
-    // setInterval fires one query per tick — no upfront timer registration,
+    // setInterval fires one query per tick - no upfront timer registration,
     // so the event loop is never overwhelmed regardless of duration.
     const runTarget = (fn) => new Promise(resolve => {
       const results = [];
@@ -1172,20 +1203,6 @@ app.post('/api/benchmark/sustained', async (req, res) => {
       ? await runTarget(() => smartCache.get(cacheKey))
       : null;
 
-    const calcStats = (arr) => {
-      const sorted = [...arr].sort((a, b) => a - b);
-      const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
-      return {
-        avg:  parseFloat(avg.toFixed(2)),
-        p50:  parseFloat((sorted[Math.floor(sorted.length * 0.50)] ?? sorted[sorted.length - 1]).toFixed(2)),
-        p95:  parseFloat((sorted[Math.floor(sorted.length * 0.95)] ?? sorted[sorted.length - 1]).toFixed(2)),
-        p99:  parseFloat((sorted[Math.floor(sorted.length * 0.99)] ?? sorted[sorted.length - 1]).toFixed(2)),
-        min:  parseFloat(sorted[0].toFixed(2)),
-        max:  parseFloat(sorted[sorted.length - 1].toFixed(2)),
-        total: arr.length
-      };
-    };
-
     res.json({
       success: true,
       tps,
@@ -1194,7 +1211,7 @@ app.post('/api/benchmark/sustained', async (req, res) => {
       target,
       assetId,
       blockchain: blockchainLatencies ? calcStats(blockchainLatencies) : null,
-      cache:      cacheLatencies      ? calcStats(cacheLatencies)      : null
+      cache: cacheLatencies ? calcStats(cacheLatencies) : null
     });
 
   } catch (error) {
@@ -1214,12 +1231,12 @@ app.post('/api/benchmark/sustained', async (req, res) => {
 //   - "Disputed"                       → dispute override fires
 app.post('/api/benchmark/setup-pharma', async (_req, res) => {
   const pharmaShipments = [
-    { id: 'PHARMA_01', color: 'Vaccines',     size: '500',   owner: 'Pfizer-Transit-Approaching-Checkpoint',  appraisedValue: '85000' },
-    { id: 'PHARMA_02', color: 'Antibiotics',  size: '200',   owner: 'Roche-Transit-NearDestination',           appraisedValue: '72000' },
-    { id: 'PHARMA_03', color: 'Insulin',      size: '150',   owner: 'AstraZeneca-Transit-MidJourney',          appraisedValue: '45000' },
-    { id: 'PHARMA_04', color: 'Vaccines',     size: '800',   owner: 'Novartis-Disputed-Transit',               appraisedValue: '95000' },
-    { id: 'PHARMA_05', color: 'Syringes',     size: '1000',  owner: 'GSK-Transit-Approaching-Checkpoint',      appraisedValue: '62000' },
-    { id: 'PHARMA_06', color: 'Diagnostics',  size: '300',   owner: 'Moderna-Transit-NearDestination',         appraisedValue: '78000' },
+    { id: 'PHARMA_01', color: 'Vaccines', size: '500', owner: 'Pfizer-Transit-Approaching-Checkpoint', appraisedValue: '85000' },
+    { id: 'PHARMA_02', color: 'Antibiotics', size: '200', owner: 'Roche-Transit-NearDestination', appraisedValue: '72000' },
+    { id: 'PHARMA_03', color: 'Insulin', size: '150', owner: 'AstraZeneca-Transit-MidJourney', appraisedValue: '45000' },
+    { id: 'PHARMA_04', color: 'Vaccines', size: '800', owner: 'Novartis-Disputed-Transit', appraisedValue: '95000' },
+    { id: 'PHARMA_05', color: 'Syringes', size: '1000', owner: 'GSK-Transit-Approaching-Checkpoint', appraisedValue: '62000' },
+    { id: 'PHARMA_06', color: 'Diagnostics', size: '300', owner: 'Moderna-Transit-NearDestination', appraisedValue: '78000' },
   ];
 
   const results = [];
@@ -1231,7 +1248,7 @@ app.post('/api/benchmark/setup-pharma', async (_req, res) => {
         results.push({ id: s.id, status: 'already_exists' });
         continue;
       } catch (_) {
-        // Doesn't exist — create it
+        // Doesn't exist - create it
       }
       const st = s.owner.includes('Disputed') ? 'DISPUTED' : s.owner.includes('Transit') ? 'In-Transit' : 'Delivered';
       await contract.submitTransaction('CreateAsset', s.id, s.color, s.size, s.owner, s.appraisedValue, st);
@@ -1251,7 +1268,7 @@ app.post('/api/benchmark/trigger-disruption', async (_req, res) => {
       'AstraZeneca-Transit-Approaching-Checkpoint', '45000');
     // Invalidate cache so next query reflects new state
     await smartCache.invalidate('asset:PHARMA_03');
-    res.json({ success: true, message: 'PHARMA_03 moved to checkpoint proximity — disruption active' });
+    res.json({ success: true, message: 'PHARMA_03 moved to checkpoint proximity - disruption active' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -1270,7 +1287,7 @@ app.post('/api/benchmark/revert-disruption', async (_req, res) => {
 });
 
 // ========================================
-// BENCHMARK SIMULATION — 3-WAY COMPARISON
+// BENCHMARK SIMULATION - 3-WAY COMPARISON
 // ========================================
 
 // Runs the full benchmark simulation:
@@ -1279,16 +1296,16 @@ app.post('/api/benchmark/revert-disruption', async (_req, res) => {
 //
 // Each round: 3 agents query 6 pharma shipments via /api/asset/:id path
 // (so access logs populate and Rule 2 can fire).
-// Disruption injected at round 4 — PHARMA_03 switches to checkpoint proximity.
+// Disruption injected at round 4 - PHARMA_03 switches to checkpoint proximity.
 //
 // Returns: { comparison, adaptive }
 
 app.post('/api/benchmark/simulate', async (_req, res) => {
-  const PHARMA_IDS = ['PHARMA_01','PHARMA_02','PHARMA_03','PHARMA_04','PHARMA_05','PHARMA_06'];
+  const PHARMA_IDS = ['PHARMA_01', 'PHARMA_02', 'PHARMA_03', 'PHARMA_04', 'PHARMA_05', 'PHARMA_06'];
   const AGENTS = [
-    { name: 'Regulatory System',   stakeholder: 'regulatory',  targets: ['PHARMA_01','PHARMA_04','PHARMA_05'] },
-    { name: 'Hospital Inventory',  stakeholder: 'hospital',    targets: ['PHARMA_02','PHARMA_06','PHARMA_04'] },
-    { name: 'Cold Chain Monitor',  stakeholder: 'coldchain',   targets: ['PHARMA_01','PHARMA_02','PHARMA_03','PHARMA_05','PHARMA_06'] },
+    { name: 'Regulatory System', stakeholder: 'regulatory', targets: ['PHARMA_01', 'PHARMA_04', 'PHARMA_05'] },
+    { name: 'Hospital Inventory', stakeholder: 'hospital', targets: ['PHARMA_02', 'PHARMA_06', 'PHARMA_04'] },
+    { name: 'Cold Chain Monitor', stakeholder: 'coldchain', targets: ['PHARMA_01', 'PHARMA_02', 'PHARMA_03', 'PHARMA_05', 'PHARMA_06'] },
   ];
   // ── Helper: query one asset, return { source, latencyMs }
   const queryAsset = async (assetId, stakeholder) => {
@@ -1345,7 +1362,7 @@ app.post('/api/benchmark/simulate', async (_req, res) => {
 
     // ════════════════════════════════════════════════════════
     // PART 1: 3-WAY COMPARISON (single pass, 3 rounds each)
-    // No-cache vs Naive vs Smart — same workload, 3 rounds
+    // No-cache vs Naive vs Smart - same workload, 3 rounds
     // ════════════════════════════════════════════════════════
 
     const comparison = { noCache: [], naive: [], smart: [] };
@@ -1419,9 +1436,9 @@ app.post('/api/benchmark/simulate', async (_req, res) => {
     // Static rules vs Adaptive tuner
     //
     // R1-R3: Normal operation with good thresholds (~91% hit rate)
-    // R4:    Misconfiguration injected — thresholds tightened for both passes
+    // R4:    Misconfiguration injected - thresholds tightened for both passes
     // R5-R8: Adaptive detects recall drop, widens thresholds, recovers
-    //        Static stays degraded — no self-healing
+    //        Static stays degraded - no self-healing
     // ════════════════════════════════════════════════════════
 
     const savedConfig = JSON.parse(JSON.stringify(preCacheRules.getConfig()));
@@ -1430,15 +1447,15 @@ app.post('/api/benchmark/simulate', async (_req, res) => {
 
     const GOOD_CONFIG = {
       rule1: { checkpointDistanceKm: 20, etaMinutes: 60, ttlMinutes: 30, enabled: true },
-      rule2: { accessCountThreshold: 3,  minOrganizations: 2, windowHours: 1, ttlHours: 24, enabled: true },
+      rule2: { accessCountThreshold: 3, minOrganizations: 2, windowHours: 1, ttlHours: 24, enabled: true },
       rule3: { valueThresholdUsd: 50000, destDistanceKm: 50, ttlMinutes: 45, enabled: true },
       rule4: { minCheckpointDistanceKm: 200, minDestDistanceKm: 200, maxNormalAccesses: 3, enabled: true }
     };
 
     const TIGHT_CONFIG = {
-      rule1: { checkpointDistanceKm: 5,  etaMinutes: 60, ttlMinutes: 30, enabled: true },
-      rule2: { accessCountThreshold: 5,  minOrganizations: 2, windowHours: 1, ttlHours: 24, enabled: true },
-      rule3: { valueThresholdUsd: 50000, destDistanceKm: 8,  ttlMinutes: 45, enabled: true },
+      rule1: { checkpointDistanceKm: 5, etaMinutes: 60, ttlMinutes: 30, enabled: true },
+      rule2: { accessCountThreshold: 5, minOrganizations: 2, windowHours: 1, ttlHours: 24, enabled: true },
+      rule3: { valueThresholdUsd: 50000, destDistanceKm: 8, ttlMinutes: 45, enabled: true },
       rule4: { minCheckpointDistanceKm: 200, minDestDistanceKm: 200, maxNormalAccesses: 3, enabled: true }
     };
 
@@ -1481,16 +1498,16 @@ app.post('/api/benchmark/simulate', async (_req, res) => {
         if (mode === 'adaptive') {
           const tuningSummary = await adaptiveTuner.endRound();
           roundStats.thresholdAdjustments = tuningSummary.thresholdAdjustments;
-          roundStats.ttlAdjustments       = tuningSummary.ttlAdjustments;
-          roundStats.currentThresholds    = tuningSummary.currentThresholds;
+          roundStats.ttlAdjustments = tuningSummary.ttlAdjustments;
+          roundStats.currentThresholds = tuningSummary.currentThresholds;
         } else {
           roundStats.thresholdAdjustments = [];
-          roundStats.ttlAdjustments       = [];
-          roundStats.currentThresholds    = {
+          roundStats.ttlAdjustments = [];
+          roundStats.currentThresholds = {
             rule1_checkpointDistanceKm: preCacheRules.config.rule1.checkpointDistanceKm,
             rule2_accessCountThreshold: preCacheRules.config.rule2.accessCountThreshold,
-            rule3_valueThresholdUsd:    preCacheRules.config.rule3.valueThresholdUsd,
-            rule3_destDistanceKm:       preCacheRules.config.rule3.destDistanceKm
+            rule3_valueThresholdUsd: preCacheRules.config.rule3.valueThresholdUsd,
+            rule3_destDistanceKm: preCacheRules.config.rule3.destDistanceKm
           };
         }
 
@@ -1500,7 +1517,7 @@ app.post('/api/benchmark/simulate', async (_req, res) => {
     };
 
     // Run both passes
-    const staticRounds   = await runSimulationPass('static');
+    const staticRounds = await runSimulationPass('static');
     const adaptiveRounds = await runSimulationPass('adaptive');
 
     // Restore original config
@@ -1524,30 +1541,244 @@ app.post('/api/benchmark/simulate', async (_req, res) => {
 });
 
 // ========================================
-// ADAPTIVE TUNER DEMO — 3 STEP EXPLAINER
+// MULTI-TRIAL EVALUATION (academic rigour)
+// ========================================
+// Runs the 3-way comparison N times independently,
+// then aggregates with mean +/- stddev +/- 95% CI.
+
+app.post('/api/benchmark/evaluate', async (req, res) => {
+  const { trials = 5 } = req.body;
+  const clampedTrials = Math.max(1, Math.min(trials, 10));
+
+  const PHARMA_IDS = ['PHARMA_01', 'PHARMA_02', 'PHARMA_03', 'PHARMA_04', 'PHARMA_05', 'PHARMA_06'];
+  const AGENTS = [
+    { name: 'Regulatory System', stakeholder: 'regulatory', targets: ['PHARMA_01', 'PHARMA_04', 'PHARMA_05'] },
+    { name: 'Hospital Inventory', stakeholder: 'hospital', targets: ['PHARMA_02', 'PHARMA_06', 'PHARMA_04'] },
+    { name: 'Cold Chain Monitor', stakeholder: 'coldchain', targets: ['PHARMA_01', 'PHARMA_02', 'PHARMA_03', 'PHARMA_05', 'PHARMA_06'] },
+  ];
+
+  const queryBlockchainDirect = async (assetId) => {
+    const t = performance.now();
+    await contract.evaluateTransaction('ReadAsset', assetId);
+    return parseFloat((performance.now() - t).toFixed(2));
+  };
+
+  const queryNaive = async (assetId) => {
+    const t = performance.now();
+    const cacheKey = `naive:${assetId}`;
+    const cached = await smartCache.get(cacheKey);
+    if (cached) return { source: 'cache', latencyMs: parseFloat((performance.now() - t).toFixed(2)) };
+    const raw = await contract.evaluateTransaction('ReadAsset', assetId);
+    const data = JSON.parse(raw.toString());
+    await smartCache.cacheWithContext(cacheKey, data, { preCached: false, ttl: 300 });
+    return { source: 'blockchain', latencyMs: parseFloat((performance.now() - t).toFixed(2)) };
+  };
+
+  const queryAssetSmart = async (assetId, stakeholder) => {
+    const t = performance.now();
+    const cacheKey = `asset:${assetId}`;
+    if (!accessLog[assetId]) accessLog[assetId] = [];
+    accessLog[assetId].push({ stakeholder, timestamp: Date.now() });
+    accessLog[assetId] = accessLog[assetId].filter(a => a.timestamp > Date.now() - 86400000);
+    const cached = await smartCache.get(cacheKey);
+    if (cached) return { source: 'cache', latencyMs: parseFloat((performance.now() - t).toFixed(2)) };
+    await contract.evaluateTransaction('ReadAsset', assetId);
+    return { source: 'blockchain', latencyMs: parseFloat((performance.now() - t).toFixed(2)) };
+  };
+
+  try {
+    // Ensure pharma shipments exist
+    for (const id of PHARMA_IDS) {
+      try { await contract.evaluateTransaction('ReadAsset', id); }
+      catch (_) {
+        return res.status(400).json({
+          success: false,
+          error: 'Pharma shipments not found. Run /api/benchmark/setup-pharma first.'
+        });
+      }
+    }
+
+    const perTrial = [];
+
+    for (let t = 0; t < clampedTrials; t++) {
+      // Full reset between trials
+      await smartCache.flushAll();
+      smartCache.resetStats();
+      for (const id of PHARMA_IDS) { accessLog[id] = []; }
+
+      const trialData = { noCache: [], naive: [], smart: [] };
+
+      for (let round = 1; round <= 3; round++) {
+        // ── No-cache
+        const noCacheLatencies = [];
+        for (const agent of AGENTS) {
+          for (const id of agent.targets) {
+            noCacheLatencies.push(await queryBlockchainDirect(id));
+          }
+        }
+
+        // ── Naive (flush naive keys each round for independence)
+        for (const id of PHARMA_IDS) { await smartCache.invalidate(`naive:${id}`); }
+        const naiveRound = { hits: 0, misses: 0, latencies: [] };
+        for (const agent of AGENTS) {
+          for (const id of agent.targets) {
+            const r = await queryNaive(id);
+            naiveRound.latencies.push(r.latencyMs);
+            if (r.source === 'cache') naiveRound.hits++; else naiveRound.misses++;
+          }
+        }
+
+        // ── Smart (run pre-cache worker before first round)
+        if (round === 1) {
+          await smartCache.flushAll();
+          smartCache.resetStats();
+          for (const id of PHARMA_IDS) { accessLog[id] = []; }
+          await runBackgroundPrecacheWorker();
+        }
+        const smartRound = { hits: 0, misses: 0, latencies: [] };
+        for (const agent of AGENTS) {
+          for (const id of agent.targets) {
+            const r = await queryAssetSmart(id, agent.stakeholder);
+            smartRound.latencies.push(r.latencyMs);
+            if (r.source === 'cache') smartRound.hits++; else smartRound.misses++;
+          }
+        }
+
+        const nq = noCacheLatencies.length;
+        trialData.noCache.push({
+          round,
+          avgLatencyMs: parseFloat((noCacheLatencies.reduce((a, b) => a + b, 0) / nq).toFixed(2)),
+          blockchainCalls: nq,
+          hitRate: 0
+        });
+        trialData.naive.push({
+          round,
+          avgLatencyMs: parseFloat((naiveRound.latencies.reduce((a, b) => a + b, 0) / naiveRound.latencies.length).toFixed(2)),
+          blockchainCalls: naiveRound.misses,
+          hitRate: parseFloat((naiveRound.hits / (naiveRound.hits + naiveRound.misses)).toFixed(3))
+        });
+        trialData.smart.push({
+          round,
+          avgLatencyMs: parseFloat((smartRound.latencies.reduce((a, b) => a + b, 0) / smartRound.latencies.length).toFixed(2)),
+          blockchainCalls: smartRound.misses,
+          hitRate: parseFloat((smartRound.hits / (smartRound.hits + smartRound.misses)).toFixed(3))
+        });
+      }
+
+      // Clean naive keys
+      for (const id of PHARMA_IDS) { await smartCache.invalidate(`naive:${id}`); }
+      perTrial.push(trialData);
+    }
+
+    // ── Aggregate across trials ──
+    const avgAcrossRounds = (trial, strategy) =>
+      trial[strategy].reduce((s, r) => s + r.avgLatencyMs, 0) / trial[strategy].length;
+    const hitRateAcrossRounds = (trial, strategy) =>
+      trial[strategy].reduce((s, r) => s + r.hitRate, 0) / trial[strategy].length;
+    const bcCallsAcrossRounds = (trial, strategy) =>
+      trial[strategy].reduce((s, r) => s + r.blockchainCalls, 0);
+
+    const summary = {
+      noCacheLatency: meanStd(perTrial.map(t => avgAcrossRounds(t, 'noCache'))),
+      naiveLatency: meanStd(perTrial.map(t => avgAcrossRounds(t, 'naive'))),
+      smartLatency: meanStd(perTrial.map(t => avgAcrossRounds(t, 'smart'))),
+      naiveHitRate: meanStd(perTrial.map(t => hitRateAcrossRounds(t, 'naive'))),
+      smartHitRate: meanStd(perTrial.map(t => hitRateAcrossRounds(t, 'smart'))),
+      naiveBcCalls: meanStd(perTrial.map(t => bcCallsAcrossRounds(t, 'naive'))),
+      smartBcCalls: meanStd(perTrial.map(t => bcCallsAcrossRounds(t, 'smart'))),
+      noCacheBcCalls: meanStd(perTrial.map(t => bcCallsAcrossRounds(t, 'noCache'))),
+    };
+
+    // Compute speedup
+    if (summary.noCacheLatency && summary.smartLatency && summary.smartLatency.mean > 0) {
+      summary.speedupFactor = parseFloat((summary.noCacheLatency.mean / summary.smartLatency.mean).toFixed(1));
+      summary.latencyReductionPct = parseFloat(
+        (((summary.noCacheLatency.mean - summary.smartLatency.mean) / summary.noCacheLatency.mean) * 100).toFixed(1)
+      );
+    }
+
+    lastEvaluationResult = { summary, perTrial, trials: clampedTrials, timestamp: new Date().toISOString() };
+
+    res.json({ success: true, ...lastEvaluationResult });
+
+  } catch (error) {
+    console.error('[Evaluate] Error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// EVALUATION EXPORT (CSV / JSON)
+// ========================================
+
+app.get('/api/benchmark/export', (req, res) => {
+  if (!lastEvaluationResult) {
+    return res.status(404).json({ success: false, error: 'No evaluation results. Run POST /api/benchmark/evaluate first.' });
+  }
+
+  const format = req.query.format || 'csv';
+
+  if (format === 'json') {
+    res.setHeader('Content-Disposition', 'attachment; filename="flashchain-evaluation.json"');
+    res.setHeader('Content-Type', 'application/json');
+    return res.json(lastEvaluationResult);
+  }
+
+  // CSV export
+  const lines = [];
+  const s = lastEvaluationResult.summary;
+
+  lines.push(`FlashChain Evaluation Results - ${lastEvaluationResult.timestamp} - ${lastEvaluationResult.trials} trials`);
+  lines.push('');
+
+  // Summary table
+  lines.push('Strategy,Mean Latency (ms),StdDev (ms),95% CI (ms),Mean Hit Rate,Mean Blockchain Calls');
+  lines.push(`No-Cache,${s.noCacheLatency.mean},${s.noCacheLatency.stddev},±${s.noCacheLatency.ci95},0,${s.noCacheBcCalls.mean}`);
+  lines.push(`Naive (5min TTL),${s.naiveLatency.mean},${s.naiveLatency.stddev},±${s.naiveLatency.ci95},${s.naiveHitRate.mean},${s.naiveBcCalls.mean}`);
+  lines.push(`Smart (Policy),${s.smartLatency.mean},${s.smartLatency.stddev},±${s.smartLatency.ci95},${s.smartHitRate.mean},${s.smartBcCalls.mean}`);
+  lines.push('');
+  lines.push(`Speedup Factor (No-Cache / Smart),${s.speedupFactor || 'N/A'}`);
+  lines.push(`Latency Reduction %,${s.latencyReductionPct || 'N/A'}`);
+  lines.push('');
+
+  // Per-trial detail
+  lines.push('Trial,Round,NoCache_AvgMs,Naive_AvgMs,Smart_AvgMs,Naive_HitRate,Smart_HitRate');
+  lastEvaluationResult.perTrial.forEach((trial, ti) => {
+    for (let ri = 0; ri < trial.noCache.length; ri++) {
+      lines.push(`${ti + 1},${ri + 1},${trial.noCache[ri].avgLatencyMs},${trial.naive[ri].avgLatencyMs},${trial.smart[ri].avgLatencyMs},${trial.naive[ri].hitRate},${trial.smart[ri].hitRate}`);
+    }
+  });
+
+  res.setHeader('Content-Disposition', 'attachment; filename="flashchain-evaluation.csv"');
+  res.setHeader('Content-Type', 'text/csv');
+  res.send(lines.join('\n'));
+});
+
+// ========================================
+// ADAPTIVE TUNER DEMO - 3 STEP EXPLAINER
 // ========================================
 //
-// Step 1: /api/tuner-demo/reset  — set deliberately tight thresholds, flush cache
-// Step 2: /api/tuner-demo/measure — run worker + queries, return hit rate + thresholds
-// Step 3: /api/tuner-demo/tune   — run endRound(), return what changed and why
+// Step 1: /api/tuner-demo/reset  - set deliberately tight thresholds, flush cache
+// Step 2: /api/tuner-demo/measure - run worker + queries, return hit rate + thresholds
+// Step 3: /api/tuner-demo/tune   - run endRound(), return what changed and why
 //
 // Frontend calls these in sequence with a button per step.
 // Shows: bad config → 0% hit rate → tuner detects → fixes thresholds → hit rate improves.
 
-const TUNER_DEMO_IDS = ['PHARMA_01','PHARMA_02','PHARMA_03','PHARMA_04','PHARMA_05','PHARMA_06'];
+const TUNER_DEMO_IDS = ['PHARMA_01', 'PHARMA_02', 'PHARMA_03', 'PHARMA_04', 'PHARMA_05', 'PHARMA_06'];
 const TUNER_DEMO_AGENTS = [
-  { stakeholder: 'regulatory', targets: ['PHARMA_01','PHARMA_04','PHARMA_05'] },
-  { stakeholder: 'hospital',   targets: ['PHARMA_02','PHARMA_06','PHARMA_04'] },
-  { stakeholder: 'coldchain',  targets: ['PHARMA_01','PHARMA_02','PHARMA_03','PHARMA_05','PHARMA_06'] },
+  { stakeholder: 'regulatory', targets: ['PHARMA_01', 'PHARMA_04', 'PHARMA_05'] },
+  { stakeholder: 'hospital', targets: ['PHARMA_02', 'PHARMA_06', 'PHARMA_04'] },
+  { stakeholder: 'coldchain', targets: ['PHARMA_01', 'PHARMA_02', 'PHARMA_03', 'PHARMA_05', 'PHARMA_06'] },
 ];
 const TUNER_DEMO_TIGHT_CONFIG = {
-  rule1: { checkpointDistanceKm: 5,  etaMinutes: 60, ttlMinutes: 30, enabled: true },
+  rule1: { checkpointDistanceKm: 5, etaMinutes: 60, ttlMinutes: 30, enabled: true },
   rule2: { accessCountThreshold: 10, minOrganizations: 2, windowHours: 1, ttlHours: 24, enabled: true },
   rule3: { valueThresholdUsd: 50000, destDistanceKm: 8, ttlMinutes: 45, enabled: true },
   rule4: { minCheckpointDistanceKm: 200, minDestDistanceKm: 200, maxNormalAccesses: 3, enabled: true }
 };
 
-// Step 1 — reset to tight (bad) thresholds
+// Step 1 - reset to tight (bad) thresholds
 app.post('/api/tuner-demo/reset', async (_req, res) => {
   try {
     adaptiveTuner.reset();
@@ -1565,13 +1796,13 @@ app.post('/api/tuner-demo/reset', async (_req, res) => {
   }
 });
 
-// Step 2 — run worker + queries, measure hit rate
+// Step 2 - run worker + queries, measure hit rate
 app.post('/api/tuner-demo/measure', async (_req, res) => {
   try {
     // Start a fresh tuner round
     adaptiveTuner.startRound();
 
-    // Run worker — pre-caches based on current (tight) thresholds
+    // Run worker - pre-caches based on current (tight) thresholds
     await runBackgroundPrecacheWorker();
 
     // Agents query
@@ -1613,10 +1844,10 @@ app.post('/api/tuner-demo/measure', async (_req, res) => {
   }
 });
 
-// Step 3 — run tuner, return adjustments, then measure again
+// Step 3 - run tuner, return adjustments, then measure again
 app.post('/api/tuner-demo/tune', async (_req, res) => {
   try {
-    // Run the tuner — adjusts thresholds based on precision/recall
+    // Run the tuner - adjusts thresholds based on precision/recall
     const tuningSummary = await adaptiveTuner.endRound();
 
     // Now measure again with new thresholds

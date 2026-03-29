@@ -2,7 +2,7 @@
 
 const { WorkloadModuleBase } = require('@hyperledger/caliper-core');
 
-// Asset IDs to query — same PHARMA assets used in the simulation
+// Asset IDs to query - same PHARMA assets used in the simulation
 const ASSET_IDS = [
   'PHARMA_01', 'PHARMA_02', 'PHARMA_03',
   'PHARMA_04', 'PHARMA_05', 'PHARMA_06'

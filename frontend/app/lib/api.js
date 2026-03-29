@@ -139,19 +139,19 @@ export const api = {
     return response.data;
   },
 
-  // Single random asset query — measures one blockchain vs one cache fetch
+  // Single random asset query - measures one blockchain vs one cache fetch
   async runSingleQuery() {
     const response = await axios.post(`${API_URL}/api/benchmark/single`);
     return response.data;
   },
 
-  // Run concurrent load benchmark — fires N parallel queries to cache and blockchain
+  // Run concurrent load benchmark - fires N parallel queries to cache and blockchain
   async runBenchmark(concurrency) {
     const response = await axios.post(`${API_URL}/api/benchmark/run`, { concurrency }, { timeout: 120000 });
     return response.data;
   },
 
-  // Caliper-like sustained rate benchmark — runs fabric, cache, or both separately
+  // Caliper-like sustained rate benchmark - runs fabric, cache, or both separately
   async runSustainedBenchmark(tps, durationSeconds, target = 'both') {
     const timeout = (durationSeconds * 2 + 60) * 1000;
     const response = await axios.post(`${API_URL}/api/benchmark/sustained`, { tps, durationSeconds, target }, { timeout });
@@ -159,9 +159,9 @@ export const api = {
   },
 
   // ── Adaptive tuner demo ─────────────────────────────────────────────────────
-  async tunerDemoReset()   { return (await axios.post(`${API_URL}/api/tuner-demo/reset`)).data; },
+  async tunerDemoReset() { return (await axios.post(`${API_URL}/api/tuner-demo/reset`)).data; },
   async tunerDemoMeasure() { return (await axios.post(`${API_URL}/api/tuner-demo/measure`)).data; },
-  async tunerDemoTune()    { return (await axios.post(`${API_URL}/api/tuner-demo/tune`)).data; },
+  async tunerDemoTune() { return (await axios.post(`${API_URL}/api/tuner-demo/tune`)).data; },
 
   // ── Benchmark simulation ────────────────────────────────────────────────────
 
@@ -171,22 +171,41 @@ export const api = {
     return response.data;
   },
 
-  // Trigger disruption — PHARMA_03 moves to checkpoint proximity at round 4
+  // Trigger disruption - PHARMA_03 moves to checkpoint proximity at round 4
   async triggerDisruption() {
     const response = await axios.post(`${API_URL}/api/benchmark/trigger-disruption`);
     return response.data;
   },
 
   // Run full simulation: 3-way comparison + 10-round adaptive vs static
-  // Long-running — allow up to 3 minutes
+  // Long-running - allow up to 3 minutes
   async runSimulation() {
     const response = await axios.post(`${API_URL}/api/benchmark/simulate`, {}, { timeout: 180000 });
     return response.data;
   },
 
+  // ── Formal evaluation ───────────────────────────────────────────────────────
+
+  // Run multi-trial evaluation (3-way comparison × N trials with mean +/- stddev)
+  async runEvaluation(trials = 5) {
+    const timeout = trials * 60000 + 30000;
+    const response = await axios.post(`${API_URL}/api/benchmark/evaluate`, { trials }, { timeout });
+    return response.data;
+  },
+
+  // Export evaluation results as CSV (triggers browser download)
+  exportResultsCsv() {
+    window.open(`${API_URL}/api/benchmark/export?format=csv`, '_blank');
+  },
+
+  // Export evaluation results as JSON (triggers browser download)
+  exportResultsJson() {
+    window.open(`${API_URL}/api/benchmark/export?format=json`, '_blank');
+  },
+
   // ── Adaptive tuner ──────────────────────────────────────────────────────────
 
-  // Get full tuner history — per-round precision/recall, threshold drift
+  // Get full tuner history - per-round precision/recall, threshold drift
   async getAdaptiveHistory() {
     const response = await axios.get(`${API_URL}/api/adaptive/history`);
     return response.data;
@@ -203,9 +222,9 @@ export const api = {
     return {
       ...asset,
       CargoType: asset.Color,
-      WeightKg:  asset.Size,
+      WeightKg: asset.Size,
       Custodian: asset.Owner,
-      ValueUSD:  asset.AppraisedValue,
+      ValueUSD: asset.AppraisedValue,
     };
   },
 

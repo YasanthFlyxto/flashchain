@@ -15,10 +15,10 @@ function StepBadge({ number, active, done }) {
 
 function ThresholdTable({ thresholds, prev }) {
   const rows = [
-    { label: 'Rule 1 — Checkpoint Distance', key: 'rule1_checkpointDistanceKm', unit: 'km' },
-    { label: 'Rule 2 — Access Count',        key: 'rule2_accessCountThreshold',  unit: 'accesses' },
-    { label: 'Rule 3 — Value Threshold',     key: 'rule3_valueThresholdUsd',     unit: 'USD' },
-    { label: 'Rule 3 — Dest Distance',       key: 'rule3_destDistanceKm',        unit: 'km' },
+    { label: 'Rule 1 - Checkpoint Distance', key: 'rule1_checkpointDistanceKm', unit: 'km' },
+    { label: 'Rule 2 - Access Count', key: 'rule2_accessCountThreshold', unit: 'accesses' },
+    { label: 'Rule 3 - Value Threshold', key: 'rule3_valueThresholdUsd', unit: 'USD' },
+    { label: 'Rule 3 - Dest Distance', key: 'rule3_destDistanceKm', unit: 'km' },
   ];
   return (
     <div className="rounded-lg border border-gray-100 overflow-hidden text-sm">
@@ -26,7 +26,7 @@ function ThresholdTable({ thresholds, prev }) {
         <span>Rule</span><span>Value</span>{prev && <span>Change</span>}
       </div>
       {rows.map(r => {
-        const val  = thresholds?.[r.key];
+        const val = thresholds?.[r.key];
         const pval = prev?.[r.key];
         const changed = prev && val !== pval;
         return (
@@ -35,7 +35,7 @@ function ThresholdTable({ thresholds, prev }) {
             <span className="font-semibold text-gray-800">{val} {r.unit}</span>
             {prev && (
               <span className={changed ? 'text-cyan-600 font-semibold' : 'text-gray-400'}>
-                {changed ? `${pval} → ${val} ↑` : '—'}
+                {changed ? `${pval} → ${val} ↑` : '-'}
               </span>
             )}
           </div>
@@ -47,7 +47,7 @@ function ThresholdTable({ thresholds, prev }) {
 
 function HitRateBar({ pct, label, colour }) {
   const colours = {
-    red:  'bg-red-400',
+    red: 'bg-red-400',
     cyan: 'bg-cyan-500',
     green: 'bg-green-500',
   };
@@ -65,13 +65,13 @@ function HitRateBar({ pct, label, colour }) {
 }
 
 export default function TunerDemoPage() {
-  const [step,    setStep]    = useState(0); // 0=idle, 1=reset done, 2=measured, 3=tuned
+  const [step, setStep] = useState(0); // 0=idle, 1=reset done, 2=measured, 3=tuned
   const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState(null);
+  const [error, setError] = useState(null);
 
-  const [resetData,   setResetData]   = useState(null);
+  const [resetData, setResetData] = useState(null);
   const [measureData, setMeasureData] = useState(null);
-  const [tuneData,    setTuneData]    = useState(null);
+  const [tuneData, setTuneData] = useState(null);
 
   const run = async (fn, onSuccess) => {
     setLoading(true);
@@ -126,7 +126,7 @@ export default function TunerDemoPage() {
           <StepBadge number={1} active={step === 0} done={step >= 1} />
           <div>
             <h2 className="font-semibold text-gray-900">Set Misconfigured Thresholds</h2>
-            <p className="text-xs text-gray-500">Rule 1 = 5km, Rule 3 dest = 8km — assets sit at 10-15km, so nothing will be cached.</p>
+            <p className="text-xs text-gray-500">Rule 1 = 5km, Rule 3 dest = 8km - assets sit at 10-15km, so nothing will be cached.</p>
           </div>
         </div>
 
@@ -182,7 +182,7 @@ export default function TunerDemoPage() {
                   <span className={d.source === 'cache' ? 'text-cyan-600 font-semibold' : 'text-gray-400'}>
                     {d.source === 'cache' ? 'Redis cache' : 'Blockchain'}
                   </span>
-                  <span>{d.preCached ? '✓' : '—'}</span>
+                  <span>{d.preCached ? '✓' : '-'}</span>
                 </div>
               ))}
             </div>
@@ -221,7 +221,7 @@ export default function TunerDemoPage() {
                     <div key={i} className="flex items-start gap-2 p-3 rounded-lg bg-cyan-50 border border-cyan-100 text-sm">
                       <ChevronRight size={14} className="text-cyan-500 mt-0.5 shrink-0" />
                       <div>
-                        <span className="font-semibold text-cyan-700">{a.rule} — {a.param}</span>
+                        <span className="font-semibold text-cyan-700">{a.rule} - {a.param}</span>
                         <span className="text-cyan-600 ml-2">{a.from} → {a.to}</span>
                         <p className="text-xs text-gray-500 mt-0.5">{a.reason}</p>
                       </div>
@@ -230,7 +230,7 @@ export default function TunerDemoPage() {
                 </div>
               </div>
             ) : (
-              <p className="text-sm text-gray-500">No adjustments made — thresholds already optimal.</p>
+              <p className="text-sm text-gray-500">No adjustments made - thresholds already optimal.</p>
             )}
 
             {/* New thresholds */}
@@ -248,7 +248,7 @@ export default function TunerDemoPage() {
 
             {tuneData.afterHitRatePct > (measureData?.hitRatePct ?? 0) && (
               <div className="rounded-lg bg-green-50 border border-green-100 px-4 py-3 text-sm text-green-700 font-semibold">
-                Hit rate improved from {measureData?.hitRatePct ?? 0}% → {tuneData.afterHitRatePct}% — no manual intervention required.
+                Hit rate improved from {measureData?.hitRatePct ?? 0}% → {tuneData.afterHitRatePct}% - no manual intervention required.
               </div>
             )}
           </div>
