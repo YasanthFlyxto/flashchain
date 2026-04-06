@@ -2,364 +2,374 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../lib/api';
-import { Settings2, Package, FlaskConical, Truck, Save, RotateCcw, AlertCircle, CheckCircle } from 'lucide-react';
+import {
+  Settings2, Plus, Trash2, ToggleLeft, ToggleRight,
+  RotateCcw, Save, X, ChevronDown, ChevronUp
+} from 'lucide-react';
 
-// ─── Slider sub-component ───────────────────────────────────────────────────
-function RuleSlider({ label, value, min, max, step = 1, unit, onChange }) {
+const PRIORITY_COLOURS = {
+  HIGH:   'bg-red-50 text-red-700 border-red-200',
+  MEDIUM: 'bg-amber-50 text-amber-700 border-amber-200',
+  LOW:    'bg-gray-100 text-gray-600 border-gray-200',
+};
+
+const LOGIC_COLOURS = {
+  AND: 'bg-blue-50 text-blue-700',
+  OR:  'bg-purple-50 text-purple-700',
+};
+
+// ── Condition row inside the add/edit modal ──────────────────────────────────
+function ConditionRow({ condition, fields, index, onChange, onRemove }) {
+  const fieldMeta = fields.find(f => f.field === condition.field) || fields[0];
+  const isNumber = fieldMeta?.type === 'number';
+
+  const operators = isNumber
+    ? ['lessThan', 'lessThanOrEqual', 'greaterThan', 'greaterThanOrEqual', 'equals']
+    : ['equals', 'notEquals', 'contains'];
+
   return (
-    <div className="space-y-1">
-      <div className="flex justify-between items-center">
-        <span className="text-sm text-gray-600">{label}</span>
-        <span className="text-sm font-semibold text-gray-900 tabular-nums">
-          {typeof value === 'number' && unit === '$'
-            ? `$${value.toLocaleString()}`
-            : `${value} ${unit}`}
-        </span>
-      </div>
+    <div className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2">
+      <select
+        value={condition.field}
+        onChange={e => onChange(index, 'field', e.target.value)}
+        className="text-sm border border-gray-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-cyan-300"
+      >
+        {fields.map(f => <option key={f.field} value={f.field}>{f.field}</option>)}
+      </select>
+
+      <select
+        value={condition.operator}
+        onChange={e => onChange(index, 'operator', e.target.value)}
+        className="text-sm border border-gray-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-cyan-300"
+      >
+        {operators.map(op => <option key={op} value={op}>{op}</option>)}
+      </select>
+
       <input
-        type="range"
-        min={min} max={max} step={step}
-        value={value}
-        onChange={e => onChange(Number(e.target.value))}
-        className="w-full h-2 rounded-lg appearance-none cursor-pointer bg-gray-200"
+        type={isNumber ? 'number' : 'text'}
+        value={condition.value}
+        onChange={e => onChange(index, 'value', isNumber ? Number(e.target.value) : e.target.value)}
+        placeholder="value"
+        className="w-24 text-sm border border-gray-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-cyan-300"
       />
-      <div className="flex justify-between text-xs text-gray-400">
-        <span>{unit === '$' ? `$${min.toLocaleString()}` : `${min} ${unit}`}</span>
-        <span>{unit === '$' ? `$${max.toLocaleString()}` : `${max} ${unit}`}</span>
-      </div>
+
+      <button onClick={() => onRemove(index)} className="text-gray-300 hover:text-red-400 ml-auto">
+        <X size={14} />
+      </button>
     </div>
   );
 }
 
-// ─── Rule card wrapper ───────────────────────────────────────────────────────
-function RuleCard({ num, title, accent, children }) {
-  const ACCENTS = {
-    blue:   { dot: 'bg-blue-500',   badge: 'bg-blue-50 text-blue-700 border-blue-100' },
-    purple: { dot: 'bg-purple-500', badge: 'bg-purple-50 text-purple-700 border-purple-100' },
-    green:  { dot: 'bg-green-500',  badge: 'bg-green-50 text-green-700 border-green-100' },
-    red:    { dot: 'bg-red-400',    badge: 'bg-red-50 text-red-700 border-red-100' },
+// ── Add / Edit modal ─────────────────────────────────────────────────────────
+function PolicyModal({ initial, fields, onSave, onClose }) {
+  const blank = { name: '', conditions: [{ field: fields[0]?.field || '', operator: 'equals', value: '' }], logic: 'AND', ttlMinutes: 30, priority: 'MEDIUM' };
+  const [form, setForm] = useState(initial || blank);
+
+  const updateCondition = (i, key, val) => {
+    const conds = form.conditions.map((c, idx) => idx === i ? { ...c, [key]: val } : c);
+    // reset operator when field type changes
+    if (key === 'field') {
+      const meta = fields.find(f => f.field === val);
+      const isNum = meta?.type === 'number';
+      conds[i].operator = isNum ? 'lessThan' : 'equals';
+      conds[i].value = '';
+    }
+    setForm({ ...form, conditions: conds });
   };
-  const a = ACCENTS[accent] || ACCENTS.blue;
+
+  const addCondition = () => setForm({
+    ...form,
+    conditions: [...form.conditions, { field: fields[0]?.field || '', operator: 'equals', value: '' }]
+  });
+
+  const removeCondition = i => setForm({ ...form, conditions: form.conditions.filter((_, idx) => idx !== i) });
+
+  const valid = form.name.trim() && form.conditions.length > 0 && form.conditions.every(c => c.value !== '');
+
   return (
-    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-      <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-3">
-        <span className={`w-2.5 h-2.5 rounded-full ${a.dot}`} />
-        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${a.badge}`}>Rule {num}</span>
-        <h3 className="font-semibold text-gray-900 text-sm">{title}</h3>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h2 className="font-semibold text-gray-900">{initial ? 'Edit Policy' : 'New Policy'}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+        </div>
+
+        <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
+          {/* Name */}
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Policy Name</label>
+            <input
+              type="text"
+              value={form.name}
+              onChange={e => setForm({ ...form, name: e.target.value })}
+              placeholder="e.g. Cold Chain Near Checkpoint"
+              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-300"
+            />
+          </div>
+
+          {/* Conditions */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-medium text-gray-600">Conditions</label>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500">Match:</span>
+                {['AND', 'OR'].map(l => (
+                  <button
+                    key={l}
+                    onClick={() => setForm({ ...form, logic: l })}
+                    className={`text-xs px-2 py-0.5 rounded font-semibold ${form.logic === l ? LOGIC_COLOURS[l] : 'bg-gray-100 text-gray-500'}`}
+                  >{l}</button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
+              {form.conditions.map((c, i) => (
+                <ConditionRow key={i} condition={c} fields={fields} index={i} onChange={updateCondition} onRemove={removeCondition} />
+              ))}
+            </div>
+            <button
+              onClick={addCondition}
+              className="mt-2 flex items-center gap-1 text-xs text-cyan-600 hover:text-cyan-700 font-medium"
+            >
+              <Plus size={12} /> Add condition
+            </button>
+          </div>
+
+          {/* TTL + Priority */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Cache TTL (minutes)</label>
+              <input
+                type="number" min="1"
+                value={form.ttlMinutes}
+                onChange={e => setForm({ ...form, ttlMinutes: Number(e.target.value) })}
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-300"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Priority</label>
+              <select
+                value={form.priority}
+                onChange={e => setForm({ ...form, priority: e.target.value })}
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-cyan-300"
+              >
+                {['HIGH', 'MEDIUM', 'LOW'].map(p => <option key={p}>{p}</option>)}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
+          <button onClick={onClose} className="px-4 py-2 text-sm border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">
+            Cancel
+          </button>
+          <button
+            onClick={() => valid && onSave(form)}
+            disabled={!valid}
+            className="flex items-center gap-1.5 px-4 py-2 text-sm bg-cyan-600 text-white font-medium rounded-lg hover:bg-cyan-700 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Save size={14} /> Save Policy
+          </button>
+        </div>
       </div>
-      <div className="px-5 py-4 space-y-4">{children}</div>
     </div>
   );
 }
 
-// ─── Live plain-English description ─────────────────────────────────────────
-function generateDescription(config) {
-  if (!config) return [];
-  const { rule1, rule2, rule3, rule4 } = config;
-  return [
-    {
-      rule: 'Rule 1 - Checkpoint Proximity',
-      text: `Pre-cache any in-transit shipment that is within ${rule1.checkpointDistanceKm} km of a ` +
-            `customs checkpoint and has an ETA of under ${rule1.etaMinutes} minutes. ` +
-            `Cached data will remain valid for ${rule1.ttlMinutes} minutes, ensuring that border agents ` +
-            `and logistics coordinators can query shipment records without hitting the blockchain at peak load.`,
-      colour: 'blue',
-    },
-    {
-      rule: 'Rule 2 - Multi-Stakeholder Access',
-      text: `When ${rule2.accessCountThreshold} or more distinct stakeholders from at least ` +
-            `${rule2.minOrganizations} organisations query the same shipment within a ${rule2.windowHours}-hour ` +
-            `window, the system treats this as a dispute or coordinated audit event. The shipment is ` +
-            `pre-cached for ${rule2.ttlHours} hours to absorb the elevated query load.`,
-      colour: 'purple',
-    },
-    {
-      rule: 'Rule 3 - High-Value Near Destination',
-      text: `Shipments valued above $${rule3.valueThresholdUsd.toLocaleString()} that are within ` +
-            `${rule3.destDistanceKm} km of their final delivery point will be pre-cached for ` +
-            `${rule3.ttlMinutes} minutes. This protects last-mile verification workflows for ` +
-            `high-risk, high-value cargo.`,
-      colour: 'green',
-    },
-    {
-      rule: 'Rule 4 - Mid-Journey Exclusion (Guard)',
-      text: `Shipments more than ${rule4.minCheckpointDistanceKm} km from their next checkpoint AND ` +
-            `more than ${rule4.minDestDistanceKm} km from their destination will NOT be pre-cached, ` +
-            `even if other rules partially match. This prevents cache pollution for cargo in the middle ` +
-            `of long-haul transit where low-urgency queries do not justify pre-loading.`,
-      colour: 'red',
-    },
-  ];
+// ── Policy card ──────────────────────────────────────────────────────────────
+function PolicyCard({ policy, onToggle, onEdit, onDelete }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className={`bg-white border rounded-xl overflow-hidden transition-all ${policy.enabled ? 'border-gray-200' : 'border-gray-100 opacity-60'}`}>
+      <div className="px-5 py-4 flex items-center gap-3">
+        {/* Toggle */}
+        <button onClick={() => onToggle(policy.id, !policy.enabled)} className="text-gray-400 hover:text-cyan-600 shrink-0">
+          {policy.enabled ? <ToggleRight size={22} className="text-cyan-600" /> : <ToggleLeft size={22} />}
+        </button>
+
+        {/* Name + badges */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold text-gray-900 text-sm">{policy.name}</span>
+            <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${PRIORITY_COLOURS[policy.priority] || PRIORITY_COLOURS.MEDIUM}`}>
+              {policy.priority}
+            </span>
+            <span className={`text-xs px-2 py-0.5 rounded font-semibold ${LOGIC_COLOURS[policy.logic]}`}>
+              {policy.logic}
+            </span>
+            <span className="text-xs text-gray-400">TTL: {policy.ttlMinutes}min</span>
+          </div>
+          <p className="text-xs text-gray-500 mt-0.5">{policy.conditions.length} condition{policy.conditions.length !== 1 ? 's' : ''}</p>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center gap-1 shrink-0">
+          <button onClick={() => setExpanded(e => !e)} className="p-1.5 text-gray-400 hover:text-gray-600">
+            {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </button>
+          <button onClick={() => onEdit(policy)} className="p-1.5 text-gray-400 hover:text-cyan-600">
+            <Settings2 size={15} />
+          </button>
+          <button onClick={() => onDelete(policy.id)} className="p-1.5 text-gray-400 hover:text-red-400">
+            <Trash2 size={15} />
+          </button>
+        </div>
+      </div>
+
+      {/* Expanded conditions */}
+      {expanded && (
+        <div className="px-5 pb-4 border-t border-gray-50">
+          <div className="mt-3 space-y-1.5">
+            {policy.conditions.map((c, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs">
+                {i > 0 && (
+                  <span className={`px-1.5 py-0.5 rounded font-semibold ${LOGIC_COLOURS[policy.logic]}`}>{policy.logic}</span>
+                )}
+                <span className="font-mono bg-gray-50 border border-gray-100 px-2 py-1 rounded text-gray-700">
+                  {c.field} <span className="text-cyan-600">{c.operator}</span> <span className="font-semibold">{c.value}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
-const PRESET_CARDS = [
-  {
-    key: 'general-logistics',
-    label: 'General Logistics',
-    desc: 'Balanced thresholds for most supply chains',
-    icon: Package,
-    colour: 'border-blue-200 bg-blue-50',
-    activeBorder: 'border-blue-500',
-    iconCls: 'text-blue-500',
-  },
-  {
-    key: 'pharmaceutical',
-    label: 'Pharmaceutical',
-    desc: 'High-compliance, temperature-sensitive cargo',
-    icon: FlaskConical,
-    colour: 'border-purple-200 bg-purple-50',
-    activeBorder: 'border-purple-500',
-    iconCls: 'text-purple-500',
-  },
-  {
-    key: 'food-beverage',
-    label: 'Food & Beverage',
-    desc: 'Perishable goods - tight time windows',
-    icon: Truck,
-    colour: 'border-green-200 bg-green-50',
-    activeBorder: 'border-green-500',
-    iconCls: 'text-green-500',
-  },
-];
-
-const COLOUR_TEXT = {
-  blue:   'text-blue-700',
-  purple: 'text-purple-700',
-  green:  'text-green-700',
-  red:    'text-red-600',
-};
-const COLOUR_BG = {
-  blue:   'bg-blue-50 border-blue-100',
-  purple: 'bg-purple-50 border-purple-100',
-  green:  'bg-green-50 border-green-100',
-  red:    'bg-red-50 border-red-100',
-};
-
+// ── Main page ────────────────────────────────────────────────────────────────
 export default function PolicyStudioPage() {
-  const [localConfig, setLocalConfig]   = useState(null);
-  const [savedConfig, setSavedConfig]   = useState(null);
-  const [activePreset, setActivePreset] = useState(null);
-  const [dirty, setDirty]               = useState(false);
-  const [saving, setSaving]             = useState(false);
-  const [saveMsg, setSaveMsg]           = useState('');
-  const [loading, setLoading]           = useState(true);
+  const [policies, setPolicies] = useState([]);
+  const [fields, setFields] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [modal, setModal] = useState(null); // null | 'add' | { ...policy }
+  const [msg, setMsg] = useState('');
 
   const load = useCallback(async () => {
     try {
-      const res = await api.getRules();
-      setLocalConfig(res.config);
-      setSavedConfig(res.config);
-      setDirty(false);
+      const res = await api.getPolicies();
+      setPolicies(res.policies || []);
+      setFields(res.fields || []);
     } catch { /* backend offline */ }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  // Detect which preset matches current localConfig
-  useEffect(() => {
-    if (!localConfig) return;
-    const PRESET_KEYS = ['general-logistics', 'pharmaceutical', 'food-beverage'];
-    // We can't reverse-match exactly without knowing preset values, so activePreset
-    // is only set when a preset card is explicitly clicked.
-  }, [localConfig]);
+  const flash = text => { setMsg(text); setTimeout(() => setMsg(''), 3000); };
 
-  const updateRule = (ruleKey, paramKey, value) => {
-    setLocalConfig(prev => ({
-      ...prev,
-      [ruleKey]: { ...prev[ruleKey], [paramKey]: value }
-    }));
-    setDirty(true);
-    setSaveMsg('');
+  const handleSave = async (form) => {
+    try {
+      if (modal?.id) {
+        await api.updatePolicy(modal.id, form);
+      } else {
+        await api.addPolicy(form);
+      }
+      setModal(null);
+      await load();
+      flash(modal?.id ? 'Policy updated.' : 'Policy added.');
+    } catch { flash('Failed to save policy.'); }
   };
 
-  const handlePreset = async (presetKey) => {
+  const handleToggle = async (id, enabled) => {
     try {
-      const res = await api.applyRulePreset(presetKey);
-      setLocalConfig(res.config);
-      setSavedConfig(res.config);
-      setActivePreset(presetKey);
-      setDirty(false);
-      setSaveMsg('Preset applied.');
-      setTimeout(() => setSaveMsg(''), 3000);
-    } catch { setSaveMsg('Failed to apply preset.'); }
+      await api.updatePolicy(id, { enabled });
+      await load();
+    } catch { flash('Failed to toggle policy.'); }
   };
 
-  const handleSave = async () => {
-    setSaving(true);
-    setSaveMsg('');
+  const handleDelete = async (id) => {
+    if (!confirm('Delete this policy?')) return;
     try {
-      const res = await api.updateRules(localConfig);
-      setSavedConfig(res.config || localConfig);
-      setDirty(false);
-      setSaveMsg('Policy saved successfully.');
-      setTimeout(() => setSaveMsg(''), 4000);
-    } catch { setSaveMsg('Save failed. Check backend connection.'); }
-    finally { setSaving(false); }
+      await api.deletePolicy(id);
+      await load();
+      flash('Policy deleted.');
+    } catch { flash('Failed to delete.'); }
   };
 
   const handleReset = async () => {
+    if (!confirm('Reset all policies to defaults?')) return;
     try {
-      const res = await api.resetRules();
-      setLocalConfig(res.config);
-      setSavedConfig(res.config);
-      setActivePreset('general-logistics');
-      setDirty(false);
-      setSaveMsg('Reset to defaults.');
-      setTimeout(() => setSaveMsg(''), 3000);
-    } catch { setSaveMsg('Reset failed.'); }
+      await api.resetPolicies();
+      await load();
+      flash('Reset to defaults.');
+    } catch { flash('Reset failed.'); }
   };
 
-  const descriptions = generateDescription(localConfig);
-
-  if (loading) {
-    return <div className="p-6 text-gray-400">Loading policy configuration…</div>;
-  }
-
-  if (!localConfig) {
-    return (
-      <div className="p-6 text-gray-500">
-        Could not load rules. Make sure the backend is running.
-      </div>
-    );
-  }
-
-  const { rule1, rule2, rule3, rule4 } = localConfig;
+  if (loading) return <div className="p-6 text-gray-400">Loading policies…</div>;
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Policy Studio</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Configure pre-caching rules - changes apply to the live FlashChain engine</p>
-        </div>
-        <Settings2 size={22} className="text-gray-400" />
-      </div>
+    <>
+      {modal !== null && (
+        <PolicyModal
+          initial={modal === 'add' ? null : modal}
+          fields={fields}
+          onSave={handleSave}
+          onClose={() => setModal(null)}
+        />
+      )}
 
-      {/* Preset Cards */}
-      <div>
-        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Industry Presets</p>
-        <div className="grid grid-cols-3 gap-4">
-          {PRESET_CARDS.map(p => (
+      <div className="p-6 space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Policy Studio</h1>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Define when shipments get pre-cached — based on live shipment properties
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {msg && <span className="text-xs text-green-600 font-medium">{msg}</span>}
             <button
-              key={p.key}
-              onClick={() => handlePreset(p.key)}
-              className={`text-left p-4 rounded-xl border-2 transition-all
-                ${activePreset === p.key
-                  ? `${p.activeBorder} bg-white shadow-sm`
-                  : `border-gray-200 bg-white hover:${p.colour}`}`}
+              onClick={handleReset}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50"
             >
-              <div className="flex items-center gap-2 mb-2">
-                <p.icon size={18} className={activePreset === p.key ? p.iconCls : 'text-gray-400'} />
-                <span className={`font-semibold text-sm ${activePreset === p.key ? 'text-gray-900' : 'text-gray-700'}`}>
-                  {p.label}
-                </span>
-              </div>
-              <p className="text-xs text-gray-500">{p.desc}</p>
-              {activePreset === p.key && (
-                <p className="text-xs font-medium mt-2" style={{ color: '#0e7490' }}>✓ Active preset</p>
-              )}
+              <RotateCcw size={14} /> Reset Defaults
             </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Two-column: sliders + description */}
-      <div className="grid grid-cols-2 gap-6">
-        {/* Left: Rule sliders */}
-        <div className="space-y-4">
-          <RuleCard num={1} title="Checkpoint Proximity" accent="blue">
-            <RuleSlider label="Checkpoint Distance" value={rule1.checkpointDistanceKm} min={5} max={100} step={5} unit="km"
-              onChange={v => updateRule('rule1', 'checkpointDistanceKm', v)} />
-            <RuleSlider label="ETA Window" value={rule1.etaMinutes} min={15} max={180} step={15} unit="min"
-              onChange={v => updateRule('rule1', 'etaMinutes', v)} />
-            <RuleSlider label="Cache TTL" value={rule1.ttlMinutes} min={10} max={120} step={5} unit="min"
-              onChange={v => updateRule('rule1', 'ttlMinutes', v)} />
-          </RuleCard>
-
-          <RuleCard num={2} title="Multi-Stakeholder Access" accent="purple">
-            <RuleSlider label="Access Count Threshold" value={rule2.accessCountThreshold} min={1} max={10} step={1} unit="accesses"
-              onChange={v => updateRule('rule2', 'accessCountThreshold', v)} />
-            <RuleSlider label="Time Window" value={rule2.windowHours} min={1} max={24} step={1} unit="hours"
-              onChange={v => updateRule('rule2', 'windowHours', v)} />
-            <RuleSlider label="Cache Duration" value={rule2.ttlHours} min={1} max={72} step={1} unit="hours"
-              onChange={v => updateRule('rule2', 'ttlHours', v)} />
-          </RuleCard>
-
-          <RuleCard num={3} title="High-Value Near Destination" accent="green">
-            <RuleSlider label="Value Threshold" value={rule3.valueThresholdUsd} min={10000} max={500000} step={10000} unit="$"
-              onChange={v => updateRule('rule3', 'valueThresholdUsd', v)} />
-            <RuleSlider label="Distance to Destination" value={rule3.destDistanceKm} min={10} max={200} step={10} unit="km"
-              onChange={v => updateRule('rule3', 'destDistanceKm', v)} />
-            <RuleSlider label="Cache TTL" value={rule3.ttlMinutes} min={15} max={120} step={15} unit="min"
-              onChange={v => updateRule('rule3', 'ttlMinutes', v)} />
-          </RuleCard>
-
-          <RuleCard num={4} title="Mid-Journey Exclusion (Guard)" accent="red">
-            <p className="text-xs text-gray-500 -mt-1">
-              Shipments meeting both conditions below are <span className="font-semibold text-red-600">excluded</span> from caching.
-            </p>
-            <RuleSlider label="Min Distance from Checkpoint" value={rule4.minCheckpointDistanceKm} min={50} max={500} step={25} unit="km"
-              onChange={v => updateRule('rule4', 'minCheckpointDistanceKm', v)} />
-            <RuleSlider label="Min Distance from Destination" value={rule4.minDestDistanceKm} min={50} max={500} step={25} unit="km"
-              onChange={v => updateRule('rule4', 'minDestDistanceKm', v)} />
-          </RuleCard>
-
-          {/* Save / Reset */}
-          <div className="flex items-center gap-3 pt-2">
-            {dirty && (
-              <span className="flex items-center gap-1 text-xs text-amber-600">
-                <AlertCircle size={12} /> Unsaved changes
-              </span>
-            )}
-            {saveMsg && !dirty && (
-              <span className="flex items-center gap-1 text-xs text-green-600">
-                <CheckCircle size={12} /> {saveMsg}
-              </span>
-            )}
-            <div className="ml-auto flex items-center gap-2">
-              <button
-                onClick={handleReset}
-                className="flex items-center gap-1.5 px-4 py-2 border border-gray-300 text-gray-600 text-sm rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                <RotateCcw size={14} /> Reset Defaults
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={!dirty || saving}
-                className="flex items-center gap-1.5 px-4 py-2 bg-cyan-600 text-white text-sm font-medium rounded-lg hover:bg-cyan-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                <Save size={14} /> {saving ? 'Saving…' : 'Save Changes'}
-              </button>
-            </div>
+            <button
+              onClick={() => setModal('add')}
+              className="flex items-center gap-1.5 px-4 py-2 text-sm bg-cyan-600 text-white font-medium rounded-lg hover:bg-cyan-700"
+            >
+              <Plus size={15} /> New Policy
+            </button>
           </div>
         </div>
 
-        {/* Right: Live plain-English descriptions */}
-        <div className="space-y-4">
-          <div className="sticky top-6">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">
-              What these rules mean in plain English
-            </p>
-            {descriptions.map(d => (
-              <div key={d.rule} className={`mb-3 p-4 rounded-xl border ${COLOUR_BG[d.colour]}`}>
-                <p className={`text-xs font-semibold mb-1.5 ${COLOUR_TEXT[d.colour]}`}>{d.rule}</p>
-                <p className="text-sm text-gray-700 leading-relaxed">{d.text}</p>
-              </div>
+        {/* Available fields reference */}
+        <div className="bg-gray-50 border border-gray-200 rounded-xl px-5 py-4">
+          <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">Available Shipment Fields</p>
+          <div className="flex flex-wrap gap-2">
+            {fields.map(f => (
+              <span key={f.field} className="flex items-center gap-1 text-xs bg-white border border-gray-200 rounded-lg px-2.5 py-1.5">
+                <span className="font-mono text-gray-700">{f.field}</span>
+                <span className={`text-xs px-1 py-0.5 rounded font-medium ${f.type === 'number' ? 'bg-cyan-50 text-cyan-600' : 'bg-purple-50 text-purple-600'}`}>
+                  {f.type}
+                </span>
+              </span>
             ))}
-            <div className="mt-4 p-4 rounded-xl bg-gray-50 border border-gray-200">
-              <p className="text-xs font-semibold text-gray-600 mb-1">How to use Policy Studio</p>
-              <ol className="text-xs text-gray-500 space-y-1 list-decimal list-inside">
-                <li>Select an industry preset or customise sliders above</li>
-                <li>Watch the descriptions update in real-time</li>
-                <li>Click <strong>Save Changes</strong> to push to the live engine</li>
-                <li>Go to <strong>Cache Intelligence</strong> and run the worker to see the effect</li>
-              </ol>
-            </div>
           </div>
         </div>
+
+        {/* Policy list */}
+        <div className="space-y-3">
+          {policies.length === 0 ? (
+            <div className="bg-white border border-gray-200 rounded-xl p-8 text-center text-gray-400 text-sm">
+              No policies defined. Click <strong>New Policy</strong> to add one.
+            </div>
+          ) : (
+            policies.map(p => (
+              <PolicyCard
+                key={p.id}
+                policy={p}
+                onToggle={handleToggle}
+                onEdit={p => setModal(p)}
+                onDelete={handleDelete}
+              />
+            ))
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }

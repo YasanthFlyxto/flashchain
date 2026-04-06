@@ -88,50 +88,9 @@ fi
 
 echo -e "${GREEN}✓ Admin wallet created${NC}"
 
-# Step 5: Create Sample Assets (Optional)
-echo -e "\n${YELLOW}[5/5] Creating Sample Assets...${NC}"
-cd /home/yasanth-ubuntu-22/fabric-samples/test-network
-
-export PATH=${PWD}/../bin:$PATH
-export FABRIC_CFG_PATH=${PWD}/../config/
-export CORE_PEER_TLS_ENABLED=true
-export CORE_PEER_LOCALMSPID="Org1MSP"
-export CORE_PEER_TLS_ROOTCERT_FILE=${PWD}/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
-export CORE_PEER_MSPCONFIGPATH=${PWD}/organizations/peerOrganizations/org1.example.com/users/Admin@org1.example.com/msp
-export CORE_PEER_ADDRESS=localhost:7051
-
-echo -e "${PURPLE}  Creating test assets...${NC}"
-
-# Asset 1
-peer chaincode invoke -o localhost:7050 \
-  --ordererTLSHostnameOverride orderer.example.com \
-  --tls --cafile "${PWD}/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem" \
-  -C mychannel -n basic \
-  --peerAddresses localhost:7051 --tlsRootCertFiles "${PWD}/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt" \
-  --peerAddresses localhost:9051 --tlsRootCertFiles "${PWD}/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt" \
-  -c '{"function":"CreateAsset","Args":["SHIP001","Electronics","100","Distributor-Transit","75000"]}' > /dev/null 2>&1
-sleep 2
-
-# Asset 2
-peer chaincode invoke -o localhost:7050 \
-  --ordererTLSHostnameOverride orderer.example.com \
-  --tls --cafile "${PWD}/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem" \
-  -C mychannel -n basic \
-  --peerAddresses localhost:7051 --tlsRootCertFiles "${PWD}/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt" \
-  --peerAddresses localhost:9051 --tlsRootCertFiles "${PWD}/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt" \
-  -c '{"function":"CreateAsset","Args":["SHIP002","Pharmaceuticals","50","Customs-Processing","45000"]}' > /dev/null 2>&1
-sleep 2
-
-# Asset 3
-peer chaincode invoke -o localhost:7050 \
-  --ordererTLSHostnameOverride orderer.example.com \
-  --tls --cafile "${PWD}/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem" \
-  -C mychannel -n basic \
-  --peerAddresses localhost:7051 --tlsRootCertFiles "${PWD}/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt" \
-  --peerAddresses localhost:9051 --tlsRootCertFiles "${PWD}/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt" \
-  -c '{"function":"CreateAsset","Args":["SHIP003","Medical-Equipment","15","Retailer-Delhi","125000"]}' > /dev/null 2>&1
-
-echo -e "${GREEN}✓ Sample assets created${NC}"
+# Step 5: Ready
+echo -e "\n${YELLOW}[5/5] Ledger ready${NC}"
+echo -e "${GREEN}Clean ledger - register shipments via the UI${NC}"
 
 # Final Message
 echo -e "\n${BLUE}╔════════════════════════════════════════════════════════════════╗${NC}"

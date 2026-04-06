@@ -19,14 +19,6 @@
 //   extends Redis TTL for assets under unexpected high demand - preventing cache
 //   expiry during active query bursts (e.g. customs hold, dispute investigation).
 //
-// References:
-//   Precision/recall as cache policy evaluation metrics: standard in CDN and
-//   edge caching literature. Godard et al. (2019) "Demand-driven caching strategies"
-//   use this exact formulation for adaptive TTL selection.
-//
-//   EMA frequency tracking for spike detection: used in TCP congestion control
-//   (RFC 6298), Redis LFU eviction policy internals, and CDN origin shield logic.
-
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -156,7 +148,7 @@ class AdaptiveTuner {
     // ── Per-rule precision ────────────────────────────────────────────────────
     // Precision[rule] = queried pre-caches / total pre-caches for that rule
     const byRule = {};
-    for (const [assetId, info] of Object.entries(preCached)) {
+    for (const [, info] of Object.entries(preCached)) {
       if (!byRule[info.rule]) byRule[info.rule] = { total: 0, queried: 0, wasted: 0 };
       byRule[info.rule].total++;
       if (info.queried) {

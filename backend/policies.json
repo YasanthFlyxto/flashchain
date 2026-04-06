@@ -1,0 +1,39 @@
+[
+  {
+    "id": "policy_checkpoint_proximity",
+    "name": "Checkpoint Proximity",
+    "enabled": true,
+    "conditions": [
+      { "field": "status",                 "operator": "equals",   "value": "In-Transit" },
+      { "field": "distanceToCheckpointKm", "operator": "lessThan", "value": 20 },
+      { "field": "etaMinutes",             "operator": "lessThan", "value": 60 }
+    ],
+    "logic": "AND",
+    "ttlMinutes": 30,
+    "priority": "HIGH"
+  },
+  {
+    "id": "policy_multi_stakeholder",
+    "name": "Multi-Stakeholder Access",
+    "enabled": true,
+    "conditions": [
+      { "field": "accessCount", "operator": "greaterThan",        "value": 3 },
+      { "field": "orgCount",    "operator": "greaterThanOrEqual", "value": 2 }
+    ],
+    "logic": "AND",
+    "ttlMinutes": 1440,
+    "priority": "HIGH"
+  },
+  {
+    "id": "policy_highval_near_dest",
+    "name": "High-Value Near Destination",
+    "enabled": true,
+    "conditions": [
+      { "field": "valueUsd",                "operator": "greaterThan", "value": 50000 },
+      { "field": "distanceToDestinationKm", "operator": "lessThan",    "value": 50 }
+    ],
+    "logic": "AND",
+    "ttlMinutes": 45,
+    "priority": "HIGH"
+  }
+]

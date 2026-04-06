@@ -2,10 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../lib/api';
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
-} from 'recharts';
-import { Database, Zap, Clock, RefreshCw, Play, Pause } from 'lucide-react';
+import { Clock, RefreshCw, Play, Pause } from 'lucide-react';
 
 function timeAgo(isoString) {
   if (!isoString) return '-';
@@ -25,52 +22,25 @@ function PriorityBadge({ priority }) {
 }
 
 export default function CacheIntelligencePage() {
-  const [stats, setStats] = useState(null);
   const [activity, setActivity] = useState([]);
   const [assets, setAssets] = useState([]);
-  const [comparisonData, setComparisonData] = useState([]);
   const [workerEnabled, setWorkerEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
 
-  const buildComparison = useCallback(async (allAssets) => {
-    const cached = (allAssets || []).filter(a => a.cachedStatus?.isPreCached).slice(0, 5);
-    if (cached.length === 0) return;
-    try {
-      const results = await Promise.all(cached.map(a => api.compareLatency(a.ID).catch(() => null)));
-      const data = results
-        .map((r, i) => {
-          if (!r?.comparison) return null;
-          const cacheMs = r.comparison.cached?.latencyMs ?? 2;
-          const chainMs  = r.comparison.blockchain?.latencyMs ?? 50;
-          return {
-            name: cached[i].ID.slice(-8),
-            'Cache (Redis)': parseFloat(cacheMs.toFixed(1)),
-            'Blockchain':    parseFloat(chainMs.toFixed(1)),
-          };
-        })
-        .filter(Boolean);
-      setComparisonData(data);
-    } catch { /* ignore */ }
-  }, []);
-
   const load = useCallback(async () => {
     try {
-      const [statsRes, activityRes, assetsRes, workerRes] = await Promise.all([
-        api.getStats().catch(() => ({ summary: {} })),
+      const [activityRes, assetsRes, workerRes] = await Promise.all([
         api.getPreCacheActivity().catch(() => ({ activity: [] })),
         api.getTestlabAssets().catch(() => ({ assets: [] })),
         api.getWorkerStatus().catch(() => ({ workerEnabled: false })),
       ]);
-      const allAssets = assetsRes.assets || [];
-      setStats(statsRes.summary || {});
       setActivity(activityRes.activity || []);
-      setAssets(allAssets);
+      setAssets(assetsRes.assets || []);
       setWorkerEnabled(workerRes.workerEnabled || false);
-      await buildComparison(allAssets);
     } catch { /* backend offline */ }
     finally { setLoading(false); }
-  }, [buildComparison]);
+  }, []);
 
   useEffect(() => {
     load();
@@ -95,13 +65,6 @@ export default function CacheIntelligencePage() {
   };
 
   const cachedAssets = assets.filter(a => a.cachedStatus?.isPreCached);
-  const hitRate = stats?.cacheHitRate;
-  const avgCacheMs = comparisonData.length
-    ? (comparisonData.reduce((s, d) => s + d['Cache (Redis)'], 0) / comparisonData.length).toFixed(1)
-    : '2.0';
-  const avgChainMs = comparisonData.length
-    ? (comparisonData.reduce((s, d) => s + d['Blockchain'], 0) / comparisonData.length).toFixed(1)
-    : '~50';
 
   return (
     <div className="p-6 space-y-6">
@@ -135,39 +98,33 @@ export default function CacheIntelligencePage() {
         </div>
       </div>
 
-    
-
-      {/* Chart + Cached List */}
-     
-       
-        {/* Pre-Cached Shipments */}
-        <div className="col-span-2 bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100">
-            <h2 className="font-semibold text-gray-900">Pre-Cached Shipments</h2>
-            <p className="text-xs text-gray-400 mt-0.5">{cachedAssets.length} in Redis</p>
-          </div>
-          <div className="overflow-y-auto max-h-64 divide-y divide-gray-50">
-            {cachedAssets.length === 0 ? (
-              <div className="p-6 text-center text-gray-400 text-sm">No shipments currently cached.</div>
-            ) : (
-              cachedAssets.map(a => (
-                <div key={a.ID} className="px-4 py-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono text-xs font-medium text-gray-700 truncate">{a.ID.slice(0, 16)}</span>
-                    <PriorityBadge priority={a.cachedStatus?.priority} />
-                  </div>
-                  <div className="flex items-center gap-3 mt-1">
-                    <span className="text-xs text-gray-500">{a.triggeredRule || '-'}</span>
-                    <span className="text-xs text-cyan-600 font-medium">
-                      {a.cachedStatus?.age != null ? `${Math.round(a.cachedStatus.age)}s old` : '-'}
-                    </span>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
+      {/* Pre-Cached Shipments */}
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100">
+          <h2 className="font-semibold text-gray-900">Pre-Cached Shipments</h2>
+          <p className="text-xs text-gray-400 mt-0.5">{cachedAssets.length} in Redis</p>
         </div>
-
+        <div className="overflow-y-auto max-h-64 divide-y divide-gray-50">
+          {cachedAssets.length === 0 ? (
+            <div className="p-6 text-center text-gray-400 text-sm">No shipments currently cached.</div>
+          ) : (
+            cachedAssets.map(a => (
+              <div key={a.ID} className="px-4 py-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-xs font-medium text-gray-700 truncate">{a.ID.slice(0, 16)}</span>
+                  <PriorityBadge priority={a.cachedStatus?.priority} />
+                </div>
+                <div className="flex items-center gap-3 mt-1">
+                  <span className="text-xs text-gray-500">{a.triggeredRule || '-'}</span>
+                  <span className="text-xs text-cyan-600 font-medium">
+                    {a.cachedStatus?.age != null ? `${Math.round(a.cachedStatus.age)}s old` : '-'}
+                  </span>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
 
       {/* Activity Log */}
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">

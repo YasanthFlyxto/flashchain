@@ -33,9 +33,7 @@ export default function Sidebar() {
       <div className="px-6 py-5 border-b border-white/10">
         <div className="flex items-center gap-2">
           <Image src="/flashchain-logo.png" alt="FlashChain" width={120} height={32} className="rounded" />
-          {/* <span className="text-white font-semibold text-lg tracking-tight">FlashChain</span> */}
         </div>
-        {/* <p className="text-white/40 text-xs mt-1">Supply Chain Manager</p> */}
       </div>
 
       {/* Navigation */}

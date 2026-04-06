@@ -7,7 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const smartCache = require('./middleware/cache');
-const { PreCachingRulesEngine } = require('./middleware/cache');
+const { PreCachingRulesEngine, PolicyEngine, DEFAULT_POLICIES } = require('./middleware/cache');
 const AdaptiveTuner = require('./middleware/adaptiveTuner');
 
 // ========================================
@@ -52,11 +52,28 @@ let workerEnabled = false;
 let workerInterval = null;
 
 
-// Initialize Pre-Caching Rules Engine
+// Initialize Pre-Caching Rules Engine (used by adaptive tuner / benchmark)
 const preCacheRules = new PreCachingRulesEngine();
 
 // Initialize Adaptive Tuner - wired to rules engine + cache
 const adaptiveTuner = new AdaptiveTuner(preCacheRules, smartCache);
+
+// Initialize JSON Policy Engine — load from policies.json, fall back to defaults
+const POLICIES_FILE = path.join(__dirname, 'policies.json');
+
+function loadPoliciesFromFile() {
+  try {
+    return JSON.parse(fs.readFileSync(POLICIES_FILE, 'utf8'));
+  } catch {
+    return DEFAULT_POLICIES;
+  }
+}
+
+function savePolicies(engine) {
+  fs.writeFileSync(POLICIES_FILE, JSON.stringify(engine.getPolicies(), null, 2), 'utf8');
+}
+
+const policyEngine = new PolicyEngine(loadPoliciesFromFile());
 
 // Track access patterns for Rule 2 (multi-stakeholder detection)
 const accessLog = {};
@@ -305,21 +322,8 @@ async function runBackgroundPrecacheWorker() {
         const assetId = enriched.ID;
         const assetAccessLog = accessLog[assetId] || [];
 
-        // Evaluate rules
-        let evaluation = preCacheRules.evaluatePreCachingRules(enriched, assetAccessLog);
-
-        // Policy override: DISPUTED shipments always pre-cache
-        if (policy === 'DISPUTED' && !evaluation.shouldPreCache) {
-          evaluation = {
-            shouldPreCache: true,
-            triggeredRule: 'Policy 01',
-            ruleName: 'Disputed Shipment (Always Pre-Cache)',
-            ttl: 24 * 60 * 60,
-            reason: 'Shipment is under dispute - policy requires full pre-cache',
-            policyTag: 'DISPUTED',
-            priority: 'HIGH'
-          };
-        }
+        // Evaluate using JSON policy engine
+        let evaluation = policyEngine.evaluate(enriched, assetAccessLog);
 
         if (!evaluation.shouldPreCache) {
           result.skipped++;
@@ -740,7 +744,7 @@ app.get('/api/testlab/assets', async (_req, res) => {
     const enrichedAssets = allAssets.map(asset => {
       const enriched = enrichAssetWithLocation(asset);
       const assetAccessLog = accessLog[asset.ID] || [];
-      const evaluation = preCacheRules.evaluatePreCachingRules(enriched, assetAccessLog);
+      const evaluation = policyEngine.evaluate(enriched, assetAccessLog);
 
       return {
         ...enriched,
@@ -955,6 +959,58 @@ app.post('/api/rules/reset', (_req, res) => {
     message: 'Rules reset to General Logistics defaults',
     config: preCacheRules.getConfig()
   });
+});
+
+// ========================================
+// POLICY ENGINE CRUD ENDPOINTS
+// ========================================
+
+// List all policies + available fields
+app.get('/api/policies', (_req, res) => {
+  res.json({
+    success: true,
+    policies: policyEngine.getPolicies(),
+    fields: Object.entries(PolicyEngine.FIELD_TYPES).map(([field, type]) => ({ field, type })),
+    operators: {
+      string: ['equals', 'notEquals', 'contains'],
+      number: ['lessThan', 'lessThanOrEqual', 'greaterThan', 'greaterThanOrEqual', 'equals'],
+    },
+  });
+});
+
+// Add a new policy
+app.post('/api/policies', (req, res) => {
+  const { name, conditions, logic, ttlMinutes, priority } = req.body;
+  if (!name || !conditions || !Array.isArray(conditions) || conditions.length === 0) {
+    return res.status(400).json({ success: false, error: 'name and conditions[] are required' });
+  }
+  const id = 'policy_' + Date.now();
+  policyEngine.addPolicy({ id, name, enabled: true, conditions, logic: logic || 'AND', ttlMinutes: ttlMinutes || 30, priority: priority || 'MEDIUM' });
+  savePolicies(policyEngine);
+  res.json({ success: true, policies: policyEngine.getPolicies() });
+});
+
+// Update a policy (patch fields)
+app.patch('/api/policies/:id', (req, res) => {
+  const ok = policyEngine.updatePolicy(req.params.id, req.body);
+  if (!ok) return res.status(404).json({ success: false, error: 'Policy not found' });
+  savePolicies(policyEngine);
+  res.json({ success: true, policies: policyEngine.getPolicies() });
+});
+
+// Delete a policy
+app.delete('/api/policies/:id', (req, res) => {
+  const ok = policyEngine.removePolicy(req.params.id);
+  if (!ok) return res.status(404).json({ success: false, error: 'Policy not found' });
+  savePolicies(policyEngine);
+  res.json({ success: true, policies: policyEngine.getPolicies() });
+});
+
+// Reset to defaults
+app.post('/api/policies/reset', (_req, res) => {
+  policyEngine.resetToDefaults();
+  savePolicies(policyEngine);
+  res.json({ success: true, policies: policyEngine.getPolicies() });
 });
 
 // Get asset counts (hot vs cold)

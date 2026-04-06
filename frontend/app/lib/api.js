@@ -4,12 +4,6 @@ import axios from 'axios';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 export const api = {
-  // Get all shipments from blockchain
-  async getAllShipments() {
-    const response = await axios.get(`${API_URL}/api/assets`);
-    return response.data;
-  },
-
   // Get single shipment (cache-first)
   async getShipment(id, stakeholder = 'default') {
     const response = await axios.get(`${API_URL}/api/asset/${id}?stakeholder=${stakeholder}`);
@@ -115,30 +109,6 @@ export const api = {
     return response.data;
   },
 
-  // Get current rule configuration and available industry presets
-  async getRules() {
-    const response = await axios.get(`${API_URL}/api/rules`);
-    return response.data;
-  },
-
-  // Apply a named industry preset (e.g. 'pharmaceutical', 'food-beverage', 'general-logistics')
-  async applyRulePreset(preset) {
-    const response = await axios.post(`${API_URL}/api/rules`, { preset });
-    return response.data;
-  },
-
-  // Apply a custom rule configuration object
-  async updateRules(config) {
-    const response = await axios.post(`${API_URL}/api/rules`, { config });
-    return response.data;
-  },
-
-  // Reset all rules to system defaults
-  async resetRules() {
-    const response = await axios.post(`${API_URL}/api/rules/reset`);
-    return response.data;
-  },
-
   // Single random asset query - measures one blockchain vs one cache fetch
   async runSingleQuery() {
     const response = await axios.post(`${API_URL}/api/benchmark/single`);
@@ -155,6 +125,33 @@ export const api = {
   async runSustainedBenchmark(tps, durationSeconds, target = 'both') {
     const timeout = (durationSeconds * 2 + 60) * 1000;
     const response = await axios.post(`${API_URL}/api/benchmark/sustained`, { tps, durationSeconds, target }, { timeout });
+    return response.data;
+  },
+
+  // ── Policy engine ───────────────────────────────────────────────────────────
+
+  async getPolicies() {
+    const response = await axios.get(`${API_URL}/api/policies`);
+    return response.data;
+  },
+
+  async addPolicy(policy) {
+    const response = await axios.post(`${API_URL}/api/policies`, policy);
+    return response.data;
+  },
+
+  async updatePolicy(id, updates) {
+    const response = await axios.patch(`${API_URL}/api/policies/${id}`, updates);
+    return response.data;
+  },
+
+  async deletePolicy(id) {
+    const response = await axios.delete(`${API_URL}/api/policies/${id}`);
+    return response.data;
+  },
+
+  async resetPolicies() {
+    const response = await axios.post(`${API_URL}/api/policies/reset`);
     return response.data;
   },
 

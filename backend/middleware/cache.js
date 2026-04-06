@@ -1,106 +1,84 @@
 // middleware/cache.js - Policy-Based Pre-Caching System
-//
-// Pre-caching policy design is grounded in supply chain operations research.
-// Key references:
-//   [W22]  Wang, G. et al. (2022) "Smart contract-based caching and data transaction optimization
-//          in mobile edge computing." Knowledge-Based Systems, 252, p.109344.
-//          → Establishes that context-aware selective caching outperforms indiscriminate caching
-//            in distributed ledger environments; motivates the policy engine approach.
-//   [B24]  Bozkaya-Aras, E. (2024) "Blockchain-Based Secure Content Caching and Computation
-//          for Edge Computing." IEEE Access, 12, pp.47619–47629.
-//          → Demonstrates resource efficiency of selective pre-caching over naive caching
-//            for blockchain edge nodes; underpins Rule 4 (mid-journey exclusion).
-//   [A21]  Agrawal, T.K. et al. (2021) "Blockchain-based framework for supply chain traceability."
-//          Computers & Industrial Engineering, 154, p.107130.
-//          → Documents multi-stakeholder concurrent access patterns during dispute and audit
-//            phases; directly motivates Rule 2 and Rule 3 threshold selection.
-//   [G23]  Gruchmann, T., Elgazzar, S. and Ali, A.H. (2023) "Blockchain technology in
-//          pharmaceutical supply chains: a transaction cost perspective."
-//          Modern Supply Chain Research and Applications, 5(2), pp.115–133.
-//          → Identifies documentation pre-availability as a transaction cost driver in
-//            pharmaceutical supply chains; motivates the Pharmaceutical preset wider windows.
-//   [C21]  Casino, F. et al. (2021) "Blockchain-based food supply chain traceability: a case
-//          study in the dairy sector." International Journal of Production Research,
-//          59(19), pp.5758–5770.
-//          → Shows perishable-goods chains require tighter time-critical documentation windows
-//            than general logistics; motivates the Food & Beverage preset shorter TTLs.
-//   [T23]  Tang, W. et al. (2023) "Strategic Latency Reduction in Blockchain Peer-to-Peer
-//          Networks." Proc. ACM Meas. Anal. Comput. Syst., 7(2), pp.1–33.
-//          → Quantifies blockchain query latency; establishes that pre-fetching before
-//            predictable high-demand windows is the primary strategy for latency reduction.
-//   [J25]  Javed, F. & Mangues-Bafalluy, J. (2025) "An Empirical Smart Contracts Latency
-//          Analysis on Ethereum Blockchain." arXiv:2503.01397.
-//          → Confirms that smart contract read latency under concurrent multi-org load is
-//            the dominant bottleneck; reinforces the case for pre-caching before demand peaks.
 
 const redis = require('redis');
 
 // ========================================
 // DEFAULT RULE CONFIGURATION
+// (kept for adaptiveTuner / benchmark compatibility)
 // ========================================
-//
-// Default thresholds represent a balanced General Logistics profile.
-// Each parameter is independently configurable by supply chain managers
-// to reflect their industry, geography, and compliance requirements [W22][A21].
-//
-// Rule 1 - Checkpoint Proximity (20 km / 60 min)
-//   The WCO SAFE Framework (2005, rev. 2021) and the EU Import Control System (ICS2)
-//   mandate advance electronic cargo declarations before vessel/vehicle arrival at
-//   the border. At typical road freight speeds (~80 km/h), a 20 km window provides
-//   ~15 minutes of lead time - sufficient for a Redis pre-cache write to complete and
-//   be served before the customs query arrives [T23][J25].
-//
-// Rule 2 - Multi-Stakeholder Access (>3 accesses, ≥2 orgs, 1-hour window)
-//   Agrawal et al. (2021) [A21] identify that simultaneous cross-organisation access
-//   to the same blockchain record is a reliable indicator of an active dispute,
-//   compliance audit, or regulatory investigation. The 3-access / 2-org threshold
-//   filters out routine single-party queries and targets only coordinated multi-party
-//   patterns, consistent with the Hyperledger Fabric multi-MSP query model [S20].
-//   [S20] Shalaby, S. et al. (2020) "Performance Evaluation of Hyperledger Fabric."
-//         IEEE ICIoT, Doha, pp.608–613.
-//
-// Rule 3 - High-Value Near Destination ($50 k / 50 km)
-//   TAPA Freight Security Requirements (FSR 2020) classify the last-mile delivery zone
-//   as the highest-risk segment for cargo theft and documentation disputes. At $50 k+
-//   appraised value, delivery inspection involves customs valuation, insurance sign-off,
-//   and receiver verification - all of which trigger concurrent blockchain reads [A21].
-//   The 50 km threshold covers typical metropolitan last-mile delivery zones.
-//
-// Rule 4 - Mid-Journey Exclusion (>200 km from checkpoint AND destination, ≤3 accesses)
-//   Wang et al. (2022) [W22] demonstrate that indiscriminate pre-caching wastes edge
-//   compute and memory resources without latency benefit when assets are far from
-//   predictable access events. Bozkaya-Aras (2024) [B24] confirms that selective
-//   caching policies reduce cache pollution by up to 40% versus naive pre-fetch.
-//   This rule is an explicit negative policy - it prevents wasting Redis capacity on
-//   shipments that are mid-transit with no imminent checkpoint or delivery event.
 
 const DEFAULT_CONFIG = {
   rule1: {
     enabled: true,
-    checkpointDistanceKm: 20,  // km - WCO SAFE Framework advance-filing lead time [T23]
-    etaMinutes: 60,             // min - covers query arrival before customs scan window [J25]
-    ttlMinutes: 30              // min - covers the checkpoint crossing duration
+    checkpointDistanceKm: 20,
+    etaMinutes: 60,
+    ttlMinutes: 30
   },
   rule2: {
     enabled: true,
-    accessCountThreshold: 3,   // accesses - filters routine queries; targets dispute patterns [A21]
-    minOrganizations: 2,       // orgs - requires cross-MSP access to confirm multi-party event [S20]
-    windowHours: 1,            // h - aligns with typical dispute investigation burst window [A21]
-    ttlHours: 24               // h - dispute investigations typically resolve within 24h
+    accessCountThreshold: 3,
+    minOrganizations: 2,
+    windowHours: 1,
+    ttlHours: 24
   },
   rule3: {
     enabled: true,
-    valueThresholdUsd: 50000,  // USD - TAPA FSR 2020 high-value cargo classification boundary
-    destDistanceKm: 50,        // km - metropolitan last-mile delivery zone radius [A21]
-    ttlMinutes: 45             // min - covers delivery inspection and sign-off window
+    valueThresholdUsd: 50000,
+    destDistanceKm: 50,
+    ttlMinutes: 45
   },
   rule4: {
     enabled: true,
-    minCheckpointDistanceKm: 200, // km - below this = approaching; exclusion applies above [W22][B24]
-    minDestDistanceKm: 200,       // km - below this = near delivery; exclusion applies above [W22]
-    maxNormalAccesses: 3          // accesses/h - above this triggers Rule 2 instead [A21]
+    minCheckpointDistanceKm: 200,
+    minDestDistanceKm: 200,
+    maxNormalAccesses: 3
   }
 };
+
+// ========================================
+// DEFAULT POLICIES
+// (user-configurable JSON policy engine)
+// ========================================
+
+const DEFAULT_POLICIES = [
+  {
+    id: 'policy_checkpoint_proximity',
+    name: 'Checkpoint Proximity',
+    enabled: true,
+    conditions: [
+      { field: 'status',                 operator: 'equals',              value: 'In-Transit' },
+      { field: 'distanceToCheckpointKm', operator: 'lessThan',            value: 20 },
+      { field: 'etaMinutes',             operator: 'lessThan',            value: 60 },
+    ],
+    logic: 'AND',
+    ttlMinutes: 30,
+    priority: 'HIGH',
+  },
+  {
+    id: 'policy_multi_stakeholder',
+    name: 'Multi-Stakeholder Access',
+    enabled: true,
+    conditions: [
+      { field: 'accessCount', operator: 'greaterThan',        value: 3 },
+      { field: 'orgCount',    operator: 'greaterThanOrEqual', value: 2 },
+    ],
+    logic: 'AND',
+    ttlMinutes: 1440,
+    priority: 'HIGH',
+  },
+  {
+    id: 'policy_highval_near_dest',
+    name: 'High-Value Near Destination',
+    enabled: true,
+    conditions: [
+      { field: 'valueUsd',                operator: 'greaterThan', value: 50000 },
+      { field: 'distanceToDestinationKm', operator: 'lessThan',    value: 50 },
+    ],
+    logic: 'AND',
+    ttlMinutes: 45,
+    priority: 'HIGH',
+  },
+];
 
 // ========================================
 // SMART CACHE
@@ -431,9 +409,146 @@ class PreCachingRulesEngine {
   }
 }
 
+// ========================================
+// JSON POLICY ENGINE
+// ========================================
+
+const FIELD_TYPES = {
+  status:                 'string',
+  cargoType:              'string',
+  custodian:              'string',
+  distanceToCheckpointKm: 'number',
+  distanceToDestinationKm:'number',
+  etaMinutes:             'number',
+  valueUsd:               'number',
+  weightKg:               'number',
+  accessCount:            'number',
+  orgCount:               'number',
+};
+
+class PolicyEngine {
+  constructor(policies) {
+    this.policies = (policies || DEFAULT_POLICIES).map(p => ({ ...p }));
+  }
+
+  getPolicies() {
+    return this.policies;
+  }
+
+  addPolicy(policy) {
+    this.policies.push({ ...policy });
+  }
+
+  updatePolicy(id, updates) {
+    const idx = this.policies.findIndex(p => p.id === id);
+    if (idx === -1) return false;
+    this.policies[idx] = { ...this.policies[idx], ...updates };
+    return true;
+  }
+
+  removePolicy(id) {
+    const before = this.policies.length;
+    this.policies = this.policies.filter(p => p.id !== id);
+    return this.policies.length < before;
+  }
+
+  togglePolicy(id, enabled) {
+    return this.updatePolicy(id, { enabled });
+  }
+
+  resetToDefaults() {
+    this.policies = DEFAULT_POLICIES.map(p => ({ ...p }));
+  }
+
+  evaluate(asset, accessLog = []) {
+    const now = Date.now();
+    const ctx = this._buildContext(asset, accessLog, now);
+
+    for (const policy of this.policies) {
+      if (!policy.enabled) continue;
+      if (this._matches(policy, ctx)) {
+        return {
+          shouldPreCache: true,
+          triggeredRule: policy.id,
+          ruleName: policy.name,
+          ttl: policy.ttlMinutes * 60,
+          reason: this._buildReason(policy, ctx),
+          priority: policy.priority || 'MEDIUM',
+        };
+      }
+    }
+
+    return {
+      shouldPreCache: false,
+      triggeredRule: null,
+      ruleName: null,
+      ttl: 0,
+      reason: 'No policy conditions matched.',
+      priority: 'N/A',
+    };
+  }
+
+  _buildContext(asset, accessLog, now) {
+    const windowMs = 60 * 60 * 1000;
+    const recentAccesses = accessLog.filter(l => l.timestamp >= now - windowMs);
+    const uniqueOrgs = new Set(recentAccesses.map(l => l.stakeholder));
+    const owner = (asset.Owner || '').toLowerCase();
+    const statusRaw = (asset.Status || '').toLowerCase();
+    let status = 'Delivered';
+    if (statusRaw.includes('transit') || owner.includes('transit')) status = 'In-Transit';
+    else if (statusRaw.includes('disputed') || owner.includes('disputed')) status = 'DISPUTED';
+
+    let etaMinutes = 9999;
+    if (asset.ETA) etaMinutes = Math.max(0, (new Date(asset.ETA).getTime() - now) / 60000);
+
+    return {
+      status,
+      cargoType:              asset.Color || '',
+      custodian:              asset.Owner || '',
+      distanceToCheckpointKm: asset.CheckpointDistance ?? 9999,
+      distanceToDestinationKm:asset.DestinationDistance ?? 9999,
+      etaMinutes,
+      valueUsd:               parseInt(asset.AppraisedValue || '0', 10),
+      weightKg:               parseInt(asset.Size || '0', 10),
+      accessCount:            recentAccesses.length,
+      orgCount:               uniqueOrgs.size,
+    };
+  }
+
+  _matches(policy, ctx) {
+    const results = policy.conditions.map(c => this._evalCondition(c, ctx));
+    return policy.logic === 'OR' ? results.some(Boolean) : results.every(Boolean);
+  }
+
+  _evalCondition({ field, operator, value }, ctx) {
+    const actual = ctx[field];
+    if (actual === undefined) return false;
+    switch (operator) {
+      case 'equals':             return String(actual).toLowerCase() === String(value).toLowerCase();
+      case 'notEquals':          return String(actual).toLowerCase() !== String(value).toLowerCase();
+      case 'contains':           return String(actual).toLowerCase().includes(String(value).toLowerCase());
+      case 'lessThan':           return Number(actual) < Number(value);
+      case 'lessThanOrEqual':    return Number(actual) <= Number(value);
+      case 'greaterThan':        return Number(actual) > Number(value);
+      case 'greaterThanOrEqual': return Number(actual) >= Number(value);
+      default: return false;
+    }
+  }
+
+  _buildReason(policy, ctx) {
+    const parts = policy.conditions.map(c => `${c.field} ${c.operator} ${c.value} (actual: ${ctx[c.field]})`);
+    return `Policy "${policy.name}": ${parts.join(` ${policy.logic} `)}`;
+  }
+}
+
+// Expose field metadata for the frontend form
+PolicyEngine.FIELD_TYPES = FIELD_TYPES;
+
 // Export singleton instance
 const smartCache = new SmartCache();
 
 module.exports = smartCache;
 module.exports.PreCachingRulesEngine = PreCachingRulesEngine;
 module.exports.DEFAULT_CONFIG = DEFAULT_CONFIG;
+module.exports.PolicyEngine = PolicyEngine;
+module.exports.DEFAULT_POLICIES = DEFAULT_POLICIES;

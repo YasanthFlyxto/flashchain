@@ -5,7 +5,7 @@ import { api } from './lib/api';
 import KPICard from './components/KPICard';
 import StatusBadge from './components/StatusBadge';
 import {
-  Package, Activity, Zap, Database,
+  Package, Activity, Database,
   RefreshCw, Clock, AlertTriangle, TrendingUp
 } from 'lucide-react';
 
@@ -26,7 +26,6 @@ function timeAgo(isoString) {
 
 export default function Dashboard() {
   const [assets, setAssets] = useState([]);
-  const [stats, setStats] = useState(null);
   const [activity, setActivity] = useState([]);
   const [workerEnabled, setWorkerEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -34,14 +33,12 @@ export default function Dashboard() {
 
   const load = useCallback(async () => {
     try {
-      const [assetRes, statsRes, activityRes, workerRes] = await Promise.all([
+      const [assetRes, activityRes, workerRes] = await Promise.all([
         api.getTestlabAssets().catch(() => ({ assets: [] })),
-        api.getStats().catch(() => ({ summary: {} })),
         api.getPreCacheActivity().catch(() => ({ activity: [] })),
         api.getWorkerStatus().catch(() => ({ workerEnabled: false })),
       ]);
       setAssets(assetRes.assets || []);
-      setStats(statsRes.summary || {});
       setActivity((activityRes.activity || []).slice(0, 20));
       setWorkerEnabled(workerRes.workerEnabled || false);
       setLastRefresh(new Date());
@@ -69,7 +66,6 @@ export default function Dashboard() {
   const activeShipments = mapped.filter(a => a.Status === 'In-Transit' || a.Status === 'DISPUTED');
   const disputedCount = mapped.filter(a => a.Status === 'DISPUTED').length;
   const preCachedCount = mapped.filter(a => a.cachedStatus?.isPreCached).length;
-  const hitRate = stats?.cacheHitRate ?? '-';
   const recent = activeShipments.slice(0, 10);
 
   return (
@@ -106,7 +102,7 @@ export default function Dashboard() {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         <KPICard
           label="Total Shipments"
           value={loading ? '…' : mapped.length}
