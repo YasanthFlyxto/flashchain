@@ -4,9 +4,21 @@
     "name": "Checkpoint Proximity",
     "enabled": true,
     "conditions": [
-      { "field": "status",                 "operator": "equals",   "value": "In-Transit" },
-      { "field": "distanceToCheckpointKm", "operator": "lessThan", "value": 20 },
-      { "field": "etaMinutes",             "operator": "lessThan", "value": 60 }
+      {
+        "field": "status",
+        "operator": "equals",
+        "value": "In-Transit"
+      },
+      {
+        "field": "distanceToCheckpointKm",
+        "operator": "lessThan",
+        "value": 20
+      },
+      {
+        "field": "etaMinutes",
+        "operator": "lessThan",
+        "value": 60
+      }
     ],
     "logic": "AND",
     "ttlMinutes": 30,
@@ -17,8 +29,16 @@
     "name": "Multi-Stakeholder Access",
     "enabled": true,
     "conditions": [
-      { "field": "accessCount", "operator": "greaterThan",        "value": 3 },
-      { "field": "orgCount",    "operator": "greaterThanOrEqual", "value": 2 }
+      {
+        "field": "accessCount",
+        "operator": "greaterThan",
+        "value": 3
+      },
+      {
+        "field": "orgCount",
+        "operator": "greaterThanOrEqual",
+        "value": 2
+      }
     ],
     "logic": "AND",
     "ttlMinutes": 1440,
@@ -29,8 +49,16 @@
     "name": "High-Value Near Destination",
     "enabled": true,
     "conditions": [
-      { "field": "valueUsd",                "operator": "greaterThan", "value": 50000 },
-      { "field": "distanceToDestinationKm", "operator": "lessThan",    "value": 50 }
+      {
+        "field": "valueUsd",
+        "operator": "greaterThan",
+        "value": 50000
+      },
+      {
+        "field": "distanceToDestinationKm",
+        "operator": "lessThan",
+        "value": 50
+      }
     ],
     "logic": "AND",
     "ttlMinutes": 45,

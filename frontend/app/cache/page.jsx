@@ -158,7 +158,7 @@ export default function CacheIntelligencePage() {
                         {ev.assetId?.slice(0, 16) || '-'}
                       </td>
                       <td className="px-4 py-3 text-gray-600 text-xs whitespace-nowrap">
-                        {asset?.Color || '-'}
+                        {asset?.CargoType || '-'}
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-700 whitespace-nowrap">{ev.ruleName || ev.rule || '-'}</td>
                       <td className="px-4 py-3 text-xs text-gray-500 max-w-48 truncate">{ev.reason || '-'}</td>

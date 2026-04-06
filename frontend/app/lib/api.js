@@ -29,10 +29,10 @@ export const api = {
   },
 
   // Transfer shipment ownership (also invalidates cache)
-  async transferShipment(shipmentId, newOwner) {
+  async transferShipment(shipmentId, newCustodian) {
     const response = await axios.post(`${API_URL}/api/shipment/transfer`, {
       shipmentId,
-      newOwner
+      newCustodian
     });
     return response.data;
   },
@@ -109,12 +109,6 @@ export const api = {
     return response.data;
   },
 
-  // Single random asset query - measures one blockchain vs one cache fetch
-  async runSingleQuery() {
-    const response = await axios.post(`${API_URL}/api/benchmark/single`);
-    return response.data;
-  },
-
   // Run concurrent load benchmark - fires N parallel queries to cache and blockchain
   async runBenchmark(concurrency) {
     const response = await axios.post(`${API_URL}/api/benchmark/run`, { concurrency }, { timeout: 120000 });
@@ -168,38 +162,6 @@ export const api = {
     return response.data;
   },
 
-  // Trigger disruption - PHARMA_03 moves to checkpoint proximity at round 4
-  async triggerDisruption() {
-    const response = await axios.post(`${API_URL}/api/benchmark/trigger-disruption`);
-    return response.data;
-  },
-
-  // Run full simulation: 3-way comparison + 10-round adaptive vs static
-  // Long-running - allow up to 3 minutes
-  async runSimulation() {
-    const response = await axios.post(`${API_URL}/api/benchmark/simulate`, {}, { timeout: 180000 });
-    return response.data;
-  },
-
-  // ── Formal evaluation ───────────────────────────────────────────────────────
-
-  // Run multi-trial evaluation (3-way comparison × N trials with mean +/- stddev)
-  async runEvaluation(trials = 5) {
-    const timeout = trials * 60000 + 30000;
-    const response = await axios.post(`${API_URL}/api/benchmark/evaluate`, { trials }, { timeout });
-    return response.data;
-  },
-
-  // Export evaluation results as CSV (triggers browser download)
-  exportResultsCsv() {
-    window.open(`${API_URL}/api/benchmark/export?format=csv`, '_blank');
-  },
-
-  // Export evaluation results as JSON (triggers browser download)
-  exportResultsJson() {
-    window.open(`${API_URL}/api/benchmark/export?format=json`, '_blank');
-  },
-
   // ── Adaptive tuner ──────────────────────────────────────────────────────────
 
   // Get full tuner history - per-round precision/recall, threshold drift
@@ -214,18 +176,4 @@ export const api = {
     return response.data;
   },
 
-  // Map raw blockchain asset fields to SCM display terminology (UI only)
-  mapAsset(asset) {
-    return {
-      ...asset,
-      CargoType: asset.Color,
-      WeightKg: asset.Size,
-      Custodian: asset.Owner,
-      ValueUSD: asset.AppraisedValue,
-    };
-  },
-
-  mapAssets(assets) {
-    return assets.map(a => this.mapAsset(a));
-  }
 };

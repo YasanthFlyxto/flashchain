@@ -268,7 +268,7 @@ class PreCachingRulesEngine {
   /**
    * Evaluate all pre-caching rules for an asset.
    * @param {object} asset - Enriched asset (must include CheckpointDistance, DestinationDistance,
-   *                         CheckpointRequiresDocs, Status, AppraisedValue, ETA)
+   *                         CheckpointRequiresDocs, Status, ValueUSD, ETA)
    * @param {array}  accessLog - [{ stakeholder, timestamp }] entries
    * @returns {object} { shouldPreCache, triggeredRule, ruleName, ttl, reason, policyTag, priority }
    */
@@ -278,9 +278,9 @@ class PreCachingRulesEngine {
 
     const checkpointDistance = asset.CheckpointDistance ?? 9999;
     const destDistance = asset.DestinationDistance ?? 9999;
-    const value = parseInt(asset.AppraisedValue || '0', 10);
+    const value = parseInt(asset.ValueUSD || '0', 10);
     const status = (asset.Status || '').toLowerCase();
-    const owner = (asset.Owner || '').toLowerCase();
+    const owner = (asset.Custodian || '').toLowerCase();
 
     const isInTransit = status.includes('transit') || owner.includes('transit');
 
@@ -492,24 +492,24 @@ class PolicyEngine {
     const windowMs = 60 * 60 * 1000;
     const recentAccesses = accessLog.filter(l => l.timestamp >= now - windowMs);
     const uniqueOrgs = new Set(recentAccesses.map(l => l.stakeholder));
-    const owner = (asset.Owner || '').toLowerCase();
+    const custodianRaw = (asset.Custodian || '').toLowerCase();
     const statusRaw = (asset.Status || '').toLowerCase();
     let status = 'Delivered';
-    if (statusRaw.includes('transit') || owner.includes('transit')) status = 'In-Transit';
-    else if (statusRaw.includes('disputed') || owner.includes('disputed')) status = 'DISPUTED';
+    if (statusRaw.includes('transit') || custodianRaw.includes('transit')) status = 'In-Transit';
+    else if (statusRaw.includes('disputed') || custodianRaw.includes('disputed')) status = 'DISPUTED';
 
     let etaMinutes = 9999;
     if (asset.ETA) etaMinutes = Math.max(0, (new Date(asset.ETA).getTime() - now) / 60000);
 
     return {
       status,
-      cargoType:              asset.Color || '',
-      custodian:              asset.Owner || '',
+      cargoType:              asset.CargoType || '',
+      custodian:              asset.Custodian || '',
       distanceToCheckpointKm: asset.CheckpointDistance ?? 9999,
       distanceToDestinationKm:asset.DestinationDistance ?? 9999,
       etaMinutes,
-      valueUsd:               parseInt(asset.AppraisedValue || '0', 10),
-      weightKg:               parseInt(asset.Size || '0', 10),
+      valueUsd:               parseInt(asset.ValueUSD || '0', 10),
+      weightKg:               parseInt(asset.WeightKg || '0', 10),
       accessCount:            recentAccesses.length,
       orgCount:               uniqueOrgs.size,
     };

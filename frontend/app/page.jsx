@@ -62,10 +62,9 @@ export default function Dashboard() {
     } catch { /* ignore */ }
   };
 
-  const mapped = api.mapAssets(assets);
-  const activeShipments = mapped.filter(a => a.Status === 'In-Transit' || a.Status === 'DISPUTED');
-  const disputedCount = mapped.filter(a => a.Status === 'DISPUTED').length;
-  const preCachedCount = mapped.filter(a => a.cachedStatus?.isPreCached).length;
+  const activeShipments = assets.filter(a => a.Status === 'In-Transit' || a.Status === 'DISPUTED');
+  const disputedCount = assets.filter(a => a.Status === 'DISPUTED').length;
+  const preCachedCount = assets.filter(a => a.cachedStatus?.isPreCached).length;
   const recent = activeShipments.slice(0, 10);
 
   return (
@@ -105,7 +104,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-3 gap-4">
         <KPICard
           label="Total Shipments"
-          value={loading ? '…' : mapped.length}
+          value={loading ? '…' : assets.length}
           sub={`${activeShipments.length} active`}
           icon={Package}
           accent="cyan"
@@ -166,7 +165,7 @@ export default function Dashboard() {
                       <td className="px-4 py-3 text-gray-500 text-xs">
                         {a.Origin && a.Destination ? `${a.Origin} → ${a.Destination}` : '-'}
                       </td>
-                      <td className="px-4 py-3 text-gray-700 font-medium">{formatValue(a.AppraisedValue)}</td>
+                      <td className="px-4 py-3 text-gray-700 font-medium">{formatValue(a.ValueUSD)}</td>
                       <td className="px-4 py-3"><StatusBadge status={a.Status} /></td>
                       <td className="px-4 py-3">
                         {a.cachedStatus?.isPreCached

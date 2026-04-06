@@ -81,9 +81,6 @@ const accessLog = {};
 // Pre-caching activity log
 let preCacheActivity = [];
 
-// Last evaluation result (for CSV/JSON export)
-let lastEvaluationResult = null;
-
 // ========================================
 // STATISTICS HELPER
 // ========================================
@@ -109,27 +106,12 @@ function calcStats(arr) {
   };
 }
 
-// Helper: compute mean +/- stddev +/- ci95 across an array of numbers
-function meanStd(arr) {
-  const n = arr.length;
-  if (n === 0) return null;
-  const mean = arr.reduce((s, v) => s + v, 0) / n;
-  const std = Math.sqrt(arr.reduce((s, v) => s + (v - mean) ** 2, 0) / n);
-  const ci95 = 1.96 * (std / Math.sqrt(n));
-  return {
-    mean: parseFloat(mean.toFixed(3)),
-    stddev: parseFloat(std.toFixed(3)),
-    ci95: parseFloat(ci95.toFixed(3)),
-    n
-  };
-}
-
 // ========================================
 // ASSET ENRICHMENT FUNCTION
 // ========================================
 
 function enrichAssetWithLocation(asset) {
-  const ownerLower = asset.Owner.toLowerCase();
+  const ownerLower = asset.Custodian.toLowerCase();
 
   // Determine status (only 3 statuses)
   const isDisputed = ownerLower.includes('dispute') || ownerLower.includes('contested');
@@ -140,7 +122,9 @@ function enrichAssetWithLocation(asset) {
     asset.ID.startsWith('JOURNEY_') ||
     asset.ID.startsWith('BENCH_') ||
     asset.ID.startsWith('DEMO_') ||
-    asset.ID.startsWith('PHARMA_');
+    asset.ID.startsWith('PHARMA_') ||
+    asset.ID.startsWith('SHIP');
+
 
   let checkpointDistance = 9999;
   let destinationDistance = 9999;
@@ -269,7 +253,7 @@ async function connectToFabric() {
 
 async function getShipmentsByStatus(statusFilter) {
   try {
-    const result = await contract.evaluateTransaction('GetAllAssets');
+    const result = await contract.evaluateTransaction('GetAllShipments');
     const allAssets = JSON.parse(result.toString());
 
     return allAssets.filter(asset => {
@@ -357,7 +341,7 @@ async function runBackgroundPrecacheWorker() {
           reason: evaluation.reason,
           ttl: evaluation.ttl,
           timestamp: Date.now(),
-          assetValue: enriched.AppraisedValue,
+          assetValue: enriched.ValueUSD,
           status: enriched.Status,
           checkpointDistance: enriched.CheckpointDistance,
           destinationDistance: enriched.DestinationDistance,
@@ -473,7 +457,7 @@ app.get('/api/asset/:id', async (req, res) => {
     }
 
     // Cache miss - query blockchain
-    const result = await contract.evaluateTransaction('ReadAsset', assetId);
+    const result = await contract.evaluateTransaction('GetShipment', assetId);
     const assetData = JSON.parse(result.toString());
 
     // Cache for future (on-demand caching)
@@ -502,7 +486,7 @@ app.get('/api/assets', async (_req, res) => {
   const startTime = Date.now();
 
   try {
-    const result = await contract.evaluateTransaction('GetAllAssets');
+    const result = await contract.evaluateTransaction('GetAllShipments');
     const assets = JSON.parse(result.toString());
 
     const latency = Date.now() - startTime;
@@ -520,25 +504,22 @@ app.get('/api/assets', async (_req, res) => {
 // Create shipment
 app.post('/api/shipment/create', async (req, res) => {
   try {
-    const { shipmentId, color, size, owner, value } = req.body;
+    const { shipmentId, cargoType, weightKg, custodian, valueUSD } = req.body;
 
-    // Determine proper Status format
     let status = 'Delivered';
-    if (owner.includes('Disputed')) {
+    if (custodian.includes('Disputed')) {
       status = 'DISPUTED';
-    } else if (owner.includes('Transit')) {
+    } else if (custodian.includes('Transit')) {
       status = 'In-Transit';
-    } else if (owner.includes('Delivered')) {
-      status = 'Delivered';
     }
 
     await contract.submitTransaction(
-      'CreateAsset',
+      'RegisterShipment',
       shipmentId,
-      color,
-      size,
-      owner,
-      value,
+      cargoType,
+      String(weightKg),
+      custodian,
+      String(valueUSD),
       status
     );
 
@@ -560,10 +541,10 @@ app.post('/api/shipment/create', async (req, res) => {
 
 // Transfer shipment
 app.post('/api/shipment/transfer', async (req, res) => {
-  const { shipmentId, newOwner } = req.body;
+  const { shipmentId, newCustodian } = req.body;
 
   try {
-    await contract.submitTransaction('TransferAsset', shipmentId, newOwner);
+    await contract.submitTransaction('TransferCustody', shipmentId, newCustodian);
     await smartCache.invalidate(`asset:${shipmentId}`);
 
     res.json({
@@ -580,7 +561,7 @@ app.delete('/api/asset/:id', async (req, res) => {
   const assetId = req.params.id;
 
   try {
-    await contract.submitTransaction('DeleteAsset', assetId);
+    await contract.submitTransaction('DeleteShipment', assetId);
     await smartCache.invalidate(`asset:${assetId}`);
 
     res.json({
@@ -646,7 +627,7 @@ app.get('/api/precache/activity', async (_req, res) => {
           reason: cached.reason || 'Hot asset pre-cached',
           ttl: cached.ttl || 3600,
           timestamp: cached.cachedAt,
-          assetValue: cached.data.AppraisedValue,
+          assetValue: cached.data.ValueUSD,
           status: cached.data.Status,
           checkpointDistance: cached.data.CheckpointDistance || 0,
           destinationDistance: cached.data.DestinationDistance || 0,
@@ -694,7 +675,7 @@ app.get('/api/asset/:id/compare', async (req, res) => {
 
     // Measure blockchain query time with high precision
     const blockchainStart = performance.now();
-    const result = await contract.evaluateTransaction('ReadAsset', assetId);
+    const result = await contract.evaluateTransaction('GetShipment', assetId);
     const assetData = JSON.parse(result.toString());
     const pureBlockchainLatency = performance.now() - blockchainStart;
 
@@ -738,7 +719,7 @@ app.get('/api/asset/:id/compare', async (req, res) => {
 // Get testlab assets with enrichment and pre-caching evaluation
 app.get('/api/testlab/assets', async (_req, res) => {
   try {
-    const result = await contract.evaluateTransaction('GetAllAssets');
+    const result = await contract.evaluateTransaction('GetAllShipments');
     const allAssets = JSON.parse(result.toString());
 
     const enrichedAssets = allAssets.map(asset => {
@@ -804,7 +785,7 @@ app.post('/api/system/reset', async (_req, res) => {
 // Clear all test/benchmark assets from blockchain
 app.post('/api/system/clear-test-assets', async (_req, res) => {
   try {
-    const result = await contract.evaluateTransaction('GetAllAssets');
+    const result = await contract.evaluateTransaction('GetAllShipments');
     const allAssets = JSON.parse(result.toString());
 
     let deleted = 0;
@@ -824,7 +805,7 @@ app.post('/api/system/clear-test-assets', async (_req, res) => {
         asset.ID.startsWith('asset')
       ) {
         try {
-          await contract.submitTransaction('DeleteAsset', asset.ID);
+          await contract.submitTransaction('DeleteShipment', asset.ID);
           deleted++;
         } catch (err) {
           console.error(`[Cleanup] Failed to delete ${asset.ID}:`, err.message);
@@ -850,14 +831,14 @@ app.post('/api/system/clear-test-assets', async (_req, res) => {
 // Clear ALL assets (use with caution)
 app.post('/api/system/clear-all-assets', async (_req, res) => {
   try {
-    const result = await contract.evaluateTransaction('GetAllAssets');
+    const result = await contract.evaluateTransaction('GetAllShipments');
     const allAssets = JSON.parse(result.toString());
 
     let deleted = 0;
 
     for (const asset of allAssets) {
       try {
-        await contract.submitTransaction('DeleteAsset', asset.ID);
+        await contract.submitTransaction('DeleteShipment', asset.ID);
         deleted++;
       } catch (err) {
         console.error(`[Cleanup] Failed to delete ${asset.ID}:`, err.message);
@@ -1016,7 +997,7 @@ app.post('/api/policies/reset', (_req, res) => {
 // Get asset counts (hot vs cold)
 app.get('/api/assets/count', async (_req, res) => {
   try {
-    const result = await contract.evaluateTransaction('GetAllAssets');
+    const result = await contract.evaluateTransaction('GetAllShipments');
     const assets = JSON.parse(result.toString());
 
     let total = assets.length;
@@ -1111,51 +1092,13 @@ app.post('/api/adaptive/end-round', async (_req, res) => {
 // BENCHMARK ENDPOINT
 // ========================================
 
-// Single random asset query - fetches one random asset from blockchain then cache, returns raw latency.
-app.post('/api/benchmark/single', async (_req, res) => {
-  try {
-    const allResult = await contract.evaluateTransaction('GetAllAssets');
-    const assets = JSON.parse(allResult.toString());
-    if (assets.length === 0) return res.status(400).json({ success: false, error: 'No assets on ledger.' });
-
-    // Pick a random asset
-    const asset = assets[Math.floor(Math.random() * assets.length)];
-    const assetId = asset.ID;
-    const cacheKey = `asset:${assetId}`;
-
-    // Ensure it's cached
-    const existing = await smartCache.get(cacheKey);
-    if (!existing) {
-      const rawData = JSON.parse((await contract.evaluateTransaction('ReadAsset', assetId)).toString());
-      await smartCache.cacheWithContext(cacheKey, rawData, {
-        preCached: true, ttl: 3600, triggeredRule: 0,
-        ruleName: 'Benchmark', reason: 'Single query warm-up', priority: 'HIGH'
-      });
-    }
-
-    // Measure single blockchain query
-    const t1 = performance.now();
-    await contract.evaluateTransaction('ReadAsset', assetId);
-    const blockchainMs = parseFloat((performance.now() - t1).toFixed(2));
-
-    // Measure single cache query
-    const t2 = performance.now();
-    await smartCache.get(cacheKey);
-    const cacheMs = parseFloat((performance.now() - t2).toFixed(2));
-
-    res.json({ success: true, assetId, blockchainMs, cacheMs, speedup: parseFloat((blockchainMs / cacheMs).toFixed(1)) });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
 // Fires N concurrent queries to both blockchain and Redis cache, returns real latency stats.
 // Used by the Benchmark page to show how response time degrades under concurrent load.
 app.post('/api/benchmark/run', async (req, res) => {
   const { concurrency = 10 } = req.body;
   try {
     // Pick first available asset
-    const allResult = await contract.evaluateTransaction('GetAllAssets');
+    const allResult = await contract.evaluateTransaction('GetAllShipments');
     const assets = JSON.parse(allResult.toString());
     if (assets.length === 0) {
       return res.status(400).json({ success: false, error: 'No assets on ledger. Register shipments first.' });
@@ -1164,7 +1107,7 @@ app.post('/api/benchmark/run', async (req, res) => {
     const cacheKey = `asset:${assetId}`;
 
     // Warm the cache so cache hits are guaranteed
-    const rawData = JSON.parse((await contract.evaluateTransaction('ReadAsset', assetId)).toString());
+    const rawData = JSON.parse((await contract.evaluateTransaction('GetShipment', assetId)).toString());
     await smartCache.cacheWithContext(cacheKey, rawData, {
       preCached: true, ttl: 3600, triggeredRule: 0,
       ruleName: 'Benchmark', reason: 'Benchmark warm-up', priority: 'HIGH'
@@ -1175,7 +1118,7 @@ app.post('/api/benchmark/run', async (req, res) => {
     const blockchainLatencies = await Promise.all(
       Array.from({ length: concurrency }, async () => {
         const t = performance.now();
-        await contract.evaluateTransaction('ReadAsset', assetId);
+        await contract.evaluateTransaction('GetShipment', assetId);
         return parseFloat((performance.now() - t).toFixed(2));
       })
     );
@@ -1215,7 +1158,7 @@ app.post('/api/benchmark/sustained', async (req, res) => {
   const { tps = 50, durationSeconds = 10 } = req.body;
 
   try {
-    const allResult = await contract.evaluateTransaction('GetAllAssets');
+    const allResult = await contract.evaluateTransaction('GetAllShipments');
     const assets = JSON.parse(allResult.toString());
     if (assets.length === 0) {
       return res.status(400).json({ success: false, error: 'No assets on ledger.' });
@@ -1224,7 +1167,7 @@ app.post('/api/benchmark/sustained', async (req, res) => {
     const cacheKey = `asset:${assetId}`;
 
     // Warm cache
-    const rawData = JSON.parse((await contract.evaluateTransaction('ReadAsset', assetId)).toString());
+    const rawData = JSON.parse((await contract.evaluateTransaction('GetShipment', assetId)).toString());
     await smartCache.cacheWithContext(cacheKey, rawData, {
       preCached: true, ttl: 3600, triggeredRule: 0,
       ruleName: 'Benchmark', reason: 'Sustained benchmark warm-up', priority: 'HIGH'
@@ -1252,7 +1195,7 @@ app.post('/api/benchmark/sustained', async (req, res) => {
 
     // Run Fabric and Redis separately so they don't compete for the event loop
     const blockchainLatencies = (target === 'fabric' || target === 'both')
-      ? await runTarget(() => contract.evaluateTransaction('ReadAsset', assetId))
+      ? await runTarget(() => contract.evaluateTransaction('GetShipment', assetId))
       : null;
 
     const cacheLatencies = (target === 'cache' || target === 'both')
@@ -1287,12 +1230,12 @@ app.post('/api/benchmark/sustained', async (req, res) => {
 //   - "Disputed"                       → dispute override fires
 app.post('/api/benchmark/setup-pharma', async (_req, res) => {
   const pharmaShipments = [
-    { id: 'PHARMA_01', color: 'Vaccines', size: '500', owner: 'Pfizer-Transit-Approaching-Checkpoint', appraisedValue: '85000' },
-    { id: 'PHARMA_02', color: 'Antibiotics', size: '200', owner: 'Roche-Transit-NearDestination', appraisedValue: '72000' },
-    { id: 'PHARMA_03', color: 'Insulin', size: '150', owner: 'AstraZeneca-Transit-MidJourney', appraisedValue: '45000' },
-    { id: 'PHARMA_04', color: 'Vaccines', size: '800', owner: 'Novartis-Disputed-Transit', appraisedValue: '95000' },
-    { id: 'PHARMA_05', color: 'Syringes', size: '1000', owner: 'GSK-Transit-Approaching-Checkpoint', appraisedValue: '62000' },
-    { id: 'PHARMA_06', color: 'Diagnostics', size: '300', owner: 'Moderna-Transit-NearDestination', appraisedValue: '78000' },
+    { id: 'PHARMA_01', cargoType: 'Vaccines',     weightKg: '500',  custodian: 'Pfizer-Transit-Approaching-Checkpoint',  valueUSD: '85000' },
+    { id: 'PHARMA_02', cargoType: 'Antibiotics',  weightKg: '200',  custodian: 'Roche-Transit-NearDestination',          valueUSD: '72000' },
+    { id: 'PHARMA_03', cargoType: 'Insulin',      weightKg: '150',  custodian: 'AstraZeneca-Transit-MidJourney',         valueUSD: '45000' },
+    { id: 'PHARMA_04', cargoType: 'Vaccines',     weightKg: '800',  custodian: 'Novartis-Disputed-Transit',              valueUSD: '95000' },
+    { id: 'PHARMA_05', cargoType: 'Syringes',     weightKg: '1000', custodian: 'GSK-Transit-Approaching-Checkpoint',     valueUSD: '62000' },
+    { id: 'PHARMA_06', cargoType: 'Diagnostics',  weightKg: '300',  custodian: 'Moderna-Transit-NearDestination',        valueUSD: '78000' },
   ];
 
   const results = [];
@@ -1300,14 +1243,14 @@ app.post('/api/benchmark/setup-pharma', async (_req, res) => {
     try {
       // Check if exists first
       try {
-        await contract.evaluateTransaction('ReadAsset', s.id);
+        await contract.evaluateTransaction('GetShipment', s.id);
         results.push({ id: s.id, status: 'already_exists' });
         continue;
       } catch (_) {
         // Doesn't exist - create it
       }
-      const st = s.owner.includes('Disputed') ? 'DISPUTED' : s.owner.includes('Transit') ? 'In-Transit' : 'Delivered';
-      await contract.submitTransaction('CreateAsset', s.id, s.color, s.size, s.owner, s.appraisedValue, st);
+      const st = s.custodian.includes('Disputed') ? 'DISPUTED' : s.custodian.includes('Transit') ? 'In-Transit' : 'Delivered';
+      await contract.submitTransaction('RegisterShipment', s.id, s.cargoType, s.weightKg, s.custodian, s.valueUSD, st);
       results.push({ id: s.id, status: 'created' });
     } catch (err) {
       results.push({ id: s.id, status: 'error', error: err.message });
@@ -1315,499 +1258,6 @@ app.post('/api/benchmark/setup-pharma', async (_req, res) => {
   }
 
   res.json({ success: true, results });
-});
-
-// Updates PHARMA_03 to simulate a mid-journey customs hold (query spike event)
-app.post('/api/benchmark/trigger-disruption', async (_req, res) => {
-  try {
-    await contract.submitTransaction('UpdateAsset', 'PHARMA_03', 'Insulin', '150',
-      'AstraZeneca-Transit-Approaching-Checkpoint', '45000');
-    // Invalidate cache so next query reflects new state
-    await smartCache.invalidate('asset:PHARMA_03');
-    res.json({ success: true, message: 'PHARMA_03 moved to checkpoint proximity - disruption active' });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// Reverts PHARMA_03 back to mid-journey state
-app.post('/api/benchmark/revert-disruption', async (_req, res) => {
-  try {
-    await contract.submitTransaction('UpdateAsset', 'PHARMA_03', 'Insulin', '150',
-      'AstraZeneca-Transit-MidJourney', '45000');
-    await smartCache.invalidate('asset:PHARMA_03');
-    res.json({ success: true, message: 'PHARMA_03 reverted to mid-journey' });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ========================================
-// BENCHMARK SIMULATION - 3-WAY COMPARISON
-// ========================================
-
-// Runs the full benchmark simulation:
-//   - 3-way comparison: no-cache vs naive vs smart (one pass)
-//   - 10-round adaptive simulation: static rules vs adaptive tuner (second pass)
-//
-// Each round: 3 agents query 6 pharma shipments via /api/asset/:id path
-// (so access logs populate and Rule 2 can fire).
-// Disruption injected at round 4 - PHARMA_03 switches to checkpoint proximity.
-//
-// Returns: { comparison, adaptive }
-
-app.post('/api/benchmark/simulate', async (_req, res) => {
-  const PHARMA_IDS = ['PHARMA_01', 'PHARMA_02', 'PHARMA_03', 'PHARMA_04', 'PHARMA_05', 'PHARMA_06'];
-  const AGENTS = [
-    { name: 'Regulatory System', stakeholder: 'regulatory', targets: ['PHARMA_01', 'PHARMA_04', 'PHARMA_05'] },
-    { name: 'Hospital Inventory', stakeholder: 'hospital', targets: ['PHARMA_02', 'PHARMA_06', 'PHARMA_04'] },
-    { name: 'Cold Chain Monitor', stakeholder: 'coldchain', targets: ['PHARMA_01', 'PHARMA_02', 'PHARMA_03', 'PHARMA_05', 'PHARMA_06'] },
-  ];
-  // ── Helper: query one asset, return { source, latencyMs }
-  const queryAsset = async (assetId, stakeholder) => {
-    const t = performance.now();
-    const cacheKey = `asset:${assetId}`;
-
-    // Update access log (same as /api/asset/:id)
-    if (!accessLog[assetId]) accessLog[assetId] = [];
-    accessLog[assetId].push({ stakeholder, timestamp: Date.now() });
-    accessLog[assetId] = accessLog[assetId].filter(a => a.timestamp > Date.now() - 86400000);
-    adaptiveTuner.recordQuery(assetId);
-
-    const cached = await smartCache.get(cacheKey);
-    if (cached) {
-      return { source: 'cache', latencyMs: parseFloat((performance.now() - t).toFixed(2)) };
-    }
-
-    await contract.evaluateTransaction('ReadAsset', assetId);
-    return { source: 'blockchain', latencyMs: parseFloat((performance.now() - t).toFixed(2)) };
-  };
-
-  // ── Helper: query one asset bypassing cache entirely (no-cache mode)
-  const queryBlockchainDirect = async (assetId) => {
-    const t = performance.now();
-    await contract.evaluateTransaction('ReadAsset', assetId);
-    return parseFloat((performance.now() - t).toFixed(2));
-  };
-
-  // ── Helper: query one asset with naive cache (fixed 5-min TTL, no rules)
-  const queryNaive = async (assetId) => {
-    const t = performance.now();
-    const cacheKey = `naive:${assetId}`;
-    const cached = await smartCache.get(cacheKey);
-    if (cached) {
-      return { source: 'cache', latencyMs: parseFloat((performance.now() - t).toFixed(2)) };
-    }
-    const raw = await contract.evaluateTransaction('ReadAsset', assetId);
-    const data = JSON.parse(raw.toString());
-    await smartCache.cacheWithContext(cacheKey, data, { preCached: false, ttl: 300 });
-    return { source: 'blockchain', latencyMs: parseFloat((performance.now() - t).toFixed(2)) };
-  };
-
-  try {
-    // Ensure pharma shipments exist
-    for (const id of PHARMA_IDS) {
-      try { await contract.evaluateTransaction('ReadAsset', id); }
-      catch (_) {
-        return res.status(400).json({
-          success: false,
-          error: `Pharma shipments not found. Run /api/benchmark/setup-pharma first.`
-        });
-      }
-    }
-
-    // ════════════════════════════════════════════════════════
-    // PART 1: 3-WAY COMPARISON (single pass, 3 rounds each)
-    // No-cache vs Naive vs Smart - same workload, 3 rounds
-    // ════════════════════════════════════════════════════════
-
-    const comparison = { noCache: [], naive: [], smart: [] };
-
-    // Flush everything for clean start
-    await smartCache.flushAll();
-    smartCache.resetStats();
-
-    for (let round = 1; round <= 3; round++) {
-      // ── No-cache round
-      const noCacheRound = { round, hits: 0, misses: 0, blockchainCalls: 0, avgLatencyMs: 0 };
-      const noCacheLatencies = [];
-      for (const agent of AGENTS) {
-        for (const id of agent.targets) {
-          const latency = await queryBlockchainDirect(id);
-          noCacheLatencies.push(latency);
-          noCacheRound.blockchainCalls++;
-          noCacheRound.misses++;
-        }
-      }
-      noCacheRound.avgLatencyMs = parseFloat(
-        (noCacheLatencies.reduce((a, b) => a + b, 0) / noCacheLatencies.length).toFixed(2)
-      );
-      comparison.noCache.push(noCacheRound);
-
-      // ── Naive-cache round (uses naive: prefix keys)
-      const naiveRound = { round, hits: 0, misses: 0, blockchainCalls: 0, avgLatencyMs: 0 };
-      const naiveLatencies = [];
-      for (const agent of AGENTS) {
-        for (const id of agent.targets) {
-          const result = await queryNaive(id);
-          naiveLatencies.push(result.latencyMs);
-          if (result.source === 'cache') naiveRound.hits++;
-          else { naiveRound.misses++; naiveRound.blockchainCalls++; }
-        }
-      }
-      naiveRound.avgLatencyMs = parseFloat(
-        (naiveLatencies.reduce((a, b) => a + b, 0) / naiveLatencies.length).toFixed(2)
-      );
-      comparison.naive.push(naiveRound);
-
-      // ── Smart-cache round (pre-cache worker runs first)
-      if (round === 1) {
-        // Run worker once to pre-cache based on rules
-        adaptiveTuner.startRound();
-        await runBackgroundPrecacheWorker();
-      }
-      const smartRound = { round, hits: 0, misses: 0, blockchainCalls: 0, avgLatencyMs: 0 };
-      const smartLatencies = [];
-      for (const agent of AGENTS) {
-        for (const id of agent.targets) {
-          const result = await queryAsset(id, agent.stakeholder);
-          smartLatencies.push(result.latencyMs);
-          if (result.source === 'cache') smartRound.hits++;
-          else { smartRound.misses++; smartRound.blockchainCalls++; }
-        }
-      }
-      smartRound.avgLatencyMs = parseFloat(
-        (smartLatencies.reduce((a, b) => a + b, 0) / smartLatencies.length).toFixed(2)
-      );
-      comparison.smart.push(smartRound);
-    }
-
-    // Clean naive cache keys
-    for (const id of PHARMA_IDS) {
-      await smartCache.invalidate(`naive:${id}`);
-    }
-
-    // ════════════════════════════════════════════════════════
-    // PART 2: SELF-HEALING BENCHMARK (8 rounds)
-    // Static rules vs Adaptive tuner
-    //
-    // R1-R3: Normal operation with good thresholds (~91% hit rate)
-    // R4:    Misconfiguration injected - thresholds tightened for both passes
-    // R5-R8: Adaptive detects recall drop, widens thresholds, recovers
-    //        Static stays degraded - no self-healing
-    // ════════════════════════════════════════════════════════
-
-    const savedConfig = JSON.parse(JSON.stringify(preCacheRules.getConfig()));
-    const ROUNDS = 8;
-    const DISRUPTION_ROUND = 4;
-
-    const GOOD_CONFIG = {
-      rule1: { checkpointDistanceKm: 20, etaMinutes: 60, ttlMinutes: 30, enabled: true },
-      rule2: { accessCountThreshold: 3, minOrganizations: 2, windowHours: 1, ttlHours: 24, enabled: true },
-      rule3: { valueThresholdUsd: 50000, destDistanceKm: 50, ttlMinutes: 45, enabled: true },
-      rule4: { minCheckpointDistanceKm: 200, minDestDistanceKm: 200, maxNormalAccesses: 3, enabled: true }
-    };
-
-    const TIGHT_CONFIG = {
-      rule1: { checkpointDistanceKm: 5, etaMinutes: 60, ttlMinutes: 30, enabled: true },
-      rule2: { accessCountThreshold: 5, minOrganizations: 2, windowHours: 1, ttlHours: 24, enabled: true },
-      rule3: { valueThresholdUsd: 50000, destDistanceKm: 8, ttlMinutes: 45, enabled: true },
-      rule4: { minCheckpointDistanceKm: 200, minDestDistanceKm: 200, maxNormalAccesses: 3, enabled: true }
-    };
-
-    // ── Helper: run one simulation pass (static or adaptive)
-    const runSimulationPass = async (mode) => {
-      adaptiveTuner.reset();
-      preCacheRules.updateConfig(JSON.parse(JSON.stringify(GOOD_CONFIG))); // start healthy
-      await smartCache.flushAll();
-      smartCache.resetStats();
-      for (const id of PHARMA_IDS) { accessLog[id] = []; }
-
-      const rounds = [];
-      for (let round = 1; round <= ROUNDS; round++) {
-        // Inject misconfiguration at disruption round for both passes
-        if (round === DISRUPTION_ROUND) {
-          preCacheRules.updateConfig(JSON.parse(JSON.stringify(TIGHT_CONFIG)));
-        }
-
-        adaptiveTuner.startRound();
-        await smartCache.flushAll();
-        for (const id of PHARMA_IDS) { accessLog[id] = []; }
-        await runBackgroundPrecacheWorker();
-
-        const roundStats = { round, hits: 0, misses: 0, blockchainCalls: 0, totalQueries: 0, avgLatencyMs: 0 };
-        const latencies = [];
-        for (const agent of AGENTS) {
-          for (const id of agent.targets) {
-            const result = await queryAsset(id, agent.stakeholder);
-            latencies.push(result.latencyMs);
-            roundStats.totalQueries++;
-            if (result.source === 'cache') roundStats.hits++;
-            else { roundStats.misses++; roundStats.blockchainCalls++; }
-          }
-        }
-        roundStats.hitRate = parseFloat((roundStats.hits / roundStats.totalQueries).toFixed(3));
-        roundStats.avgLatencyMs = parseFloat(
-          (latencies.reduce((a, b) => a + b, 0) / latencies.length).toFixed(2)
-        );
-
-        if (mode === 'adaptive') {
-          const tuningSummary = await adaptiveTuner.endRound();
-          roundStats.thresholdAdjustments = tuningSummary.thresholdAdjustments;
-          roundStats.ttlAdjustments = tuningSummary.ttlAdjustments;
-          roundStats.currentThresholds = tuningSummary.currentThresholds;
-        } else {
-          roundStats.thresholdAdjustments = [];
-          roundStats.ttlAdjustments = [];
-          roundStats.currentThresholds = {
-            rule1_checkpointDistanceKm: preCacheRules.config.rule1.checkpointDistanceKm,
-            rule2_accessCountThreshold: preCacheRules.config.rule2.accessCountThreshold,
-            rule3_valueThresholdUsd: preCacheRules.config.rule3.valueThresholdUsd,
-            rule3_destDistanceKm: preCacheRules.config.rule3.destDistanceKm
-          };
-        }
-
-        rounds.push(roundStats);
-      }
-      return rounds;
-    };
-
-    // Run both passes
-    const staticRounds = await runSimulationPass('static');
-    const adaptiveRounds = await runSimulationPass('adaptive');
-
-    // Restore original config
-    preCacheRules.updateConfig(savedConfig);
-
-    res.json({
-      success: true,
-      comparison,
-      adaptive: {
-        staticRounds,
-        adaptiveRounds,
-        disruptionRound: DISRUPTION_ROUND,
-        adjustmentLog: adaptiveTuner.getHistory()
-      }
-    });
-
-  } catch (error) {
-    console.error('[Simulate] Error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ========================================
-// MULTI-TRIAL EVALUATION (academic rigour)
-// ========================================
-// Runs the 3-way comparison N times independently,
-// then aggregates with mean +/- stddev +/- 95% CI.
-
-app.post('/api/benchmark/evaluate', async (req, res) => {
-  const { trials = 5 } = req.body;
-  const clampedTrials = Math.max(1, Math.min(trials, 10));
-
-  const PHARMA_IDS = ['PHARMA_01', 'PHARMA_02', 'PHARMA_03', 'PHARMA_04', 'PHARMA_05', 'PHARMA_06'];
-  const AGENTS = [
-    { name: 'Regulatory System', stakeholder: 'regulatory', targets: ['PHARMA_01', 'PHARMA_04', 'PHARMA_05'] },
-    { name: 'Hospital Inventory', stakeholder: 'hospital', targets: ['PHARMA_02', 'PHARMA_06', 'PHARMA_04'] },
-    { name: 'Cold Chain Monitor', stakeholder: 'coldchain', targets: ['PHARMA_01', 'PHARMA_02', 'PHARMA_03', 'PHARMA_05', 'PHARMA_06'] },
-  ];
-
-  const queryBlockchainDirect = async (assetId) => {
-    const t = performance.now();
-    await contract.evaluateTransaction('ReadAsset', assetId);
-    return parseFloat((performance.now() - t).toFixed(2));
-  };
-
-  const queryNaive = async (assetId) => {
-    const t = performance.now();
-    const cacheKey = `naive:${assetId}`;
-    const cached = await smartCache.get(cacheKey);
-    if (cached) return { source: 'cache', latencyMs: parseFloat((performance.now() - t).toFixed(2)) };
-    const raw = await contract.evaluateTransaction('ReadAsset', assetId);
-    const data = JSON.parse(raw.toString());
-    await smartCache.cacheWithContext(cacheKey, data, { preCached: false, ttl: 300 });
-    return { source: 'blockchain', latencyMs: parseFloat((performance.now() - t).toFixed(2)) };
-  };
-
-  const queryAssetSmart = async (assetId, stakeholder) => {
-    const t = performance.now();
-    const cacheKey = `asset:${assetId}`;
-    if (!accessLog[assetId]) accessLog[assetId] = [];
-    accessLog[assetId].push({ stakeholder, timestamp: Date.now() });
-    accessLog[assetId] = accessLog[assetId].filter(a => a.timestamp > Date.now() - 86400000);
-    const cached = await smartCache.get(cacheKey);
-    if (cached) return { source: 'cache', latencyMs: parseFloat((performance.now() - t).toFixed(2)) };
-    await contract.evaluateTransaction('ReadAsset', assetId);
-    return { source: 'blockchain', latencyMs: parseFloat((performance.now() - t).toFixed(2)) };
-  };
-
-  try {
-    // Ensure pharma shipments exist
-    for (const id of PHARMA_IDS) {
-      try { await contract.evaluateTransaction('ReadAsset', id); }
-      catch (_) {
-        return res.status(400).json({
-          success: false,
-          error: 'Pharma shipments not found. Run /api/benchmark/setup-pharma first.'
-        });
-      }
-    }
-
-    const perTrial = [];
-
-    for (let t = 0; t < clampedTrials; t++) {
-      // Full reset between trials
-      await smartCache.flushAll();
-      smartCache.resetStats();
-      for (const id of PHARMA_IDS) { accessLog[id] = []; }
-
-      const trialData = { noCache: [], naive: [], smart: [] };
-
-      for (let round = 1; round <= 3; round++) {
-        // ── No-cache
-        const noCacheLatencies = [];
-        for (const agent of AGENTS) {
-          for (const id of agent.targets) {
-            noCacheLatencies.push(await queryBlockchainDirect(id));
-          }
-        }
-
-        // ── Naive (flush naive keys each round for independence)
-        for (const id of PHARMA_IDS) { await smartCache.invalidate(`naive:${id}`); }
-        const naiveRound = { hits: 0, misses: 0, latencies: [] };
-        for (const agent of AGENTS) {
-          for (const id of agent.targets) {
-            const r = await queryNaive(id);
-            naiveRound.latencies.push(r.latencyMs);
-            if (r.source === 'cache') naiveRound.hits++; else naiveRound.misses++;
-          }
-        }
-
-        // ── Smart (run pre-cache worker before first round)
-        if (round === 1) {
-          await smartCache.flushAll();
-          smartCache.resetStats();
-          for (const id of PHARMA_IDS) { accessLog[id] = []; }
-          await runBackgroundPrecacheWorker();
-        }
-        const smartRound = { hits: 0, misses: 0, latencies: [] };
-        for (const agent of AGENTS) {
-          for (const id of agent.targets) {
-            const r = await queryAssetSmart(id, agent.stakeholder);
-            smartRound.latencies.push(r.latencyMs);
-            if (r.source === 'cache') smartRound.hits++; else smartRound.misses++;
-          }
-        }
-
-        const nq = noCacheLatencies.length;
-        trialData.noCache.push({
-          round,
-          avgLatencyMs: parseFloat((noCacheLatencies.reduce((a, b) => a + b, 0) / nq).toFixed(2)),
-          blockchainCalls: nq,
-          hitRate: 0
-        });
-        trialData.naive.push({
-          round,
-          avgLatencyMs: parseFloat((naiveRound.latencies.reduce((a, b) => a + b, 0) / naiveRound.latencies.length).toFixed(2)),
-          blockchainCalls: naiveRound.misses,
-          hitRate: parseFloat((naiveRound.hits / (naiveRound.hits + naiveRound.misses)).toFixed(3))
-        });
-        trialData.smart.push({
-          round,
-          avgLatencyMs: parseFloat((smartRound.latencies.reduce((a, b) => a + b, 0) / smartRound.latencies.length).toFixed(2)),
-          blockchainCalls: smartRound.misses,
-          hitRate: parseFloat((smartRound.hits / (smartRound.hits + smartRound.misses)).toFixed(3))
-        });
-      }
-
-      // Clean naive keys
-      for (const id of PHARMA_IDS) { await smartCache.invalidate(`naive:${id}`); }
-      perTrial.push(trialData);
-    }
-
-    // ── Aggregate across trials ──
-    const avgAcrossRounds = (trial, strategy) =>
-      trial[strategy].reduce((s, r) => s + r.avgLatencyMs, 0) / trial[strategy].length;
-    const hitRateAcrossRounds = (trial, strategy) =>
-      trial[strategy].reduce((s, r) => s + r.hitRate, 0) / trial[strategy].length;
-    const bcCallsAcrossRounds = (trial, strategy) =>
-      trial[strategy].reduce((s, r) => s + r.blockchainCalls, 0);
-
-    const summary = {
-      noCacheLatency: meanStd(perTrial.map(t => avgAcrossRounds(t, 'noCache'))),
-      naiveLatency: meanStd(perTrial.map(t => avgAcrossRounds(t, 'naive'))),
-      smartLatency: meanStd(perTrial.map(t => avgAcrossRounds(t, 'smart'))),
-      naiveHitRate: meanStd(perTrial.map(t => hitRateAcrossRounds(t, 'naive'))),
-      smartHitRate: meanStd(perTrial.map(t => hitRateAcrossRounds(t, 'smart'))),
-      naiveBcCalls: meanStd(perTrial.map(t => bcCallsAcrossRounds(t, 'naive'))),
-      smartBcCalls: meanStd(perTrial.map(t => bcCallsAcrossRounds(t, 'smart'))),
-      noCacheBcCalls: meanStd(perTrial.map(t => bcCallsAcrossRounds(t, 'noCache'))),
-    };
-
-    // Compute speedup
-    if (summary.noCacheLatency && summary.smartLatency && summary.smartLatency.mean > 0) {
-      summary.speedupFactor = parseFloat((summary.noCacheLatency.mean / summary.smartLatency.mean).toFixed(1));
-      summary.latencyReductionPct = parseFloat(
-        (((summary.noCacheLatency.mean - summary.smartLatency.mean) / summary.noCacheLatency.mean) * 100).toFixed(1)
-      );
-    }
-
-    lastEvaluationResult = { summary, perTrial, trials: clampedTrials, timestamp: new Date().toISOString() };
-
-    res.json({ success: true, ...lastEvaluationResult });
-
-  } catch (error) {
-    console.error('[Evaluate] Error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ========================================
-// EVALUATION EXPORT (CSV / JSON)
-// ========================================
-
-app.get('/api/benchmark/export', (req, res) => {
-  if (!lastEvaluationResult) {
-    return res.status(404).json({ success: false, error: 'No evaluation results. Run POST /api/benchmark/evaluate first.' });
-  }
-
-  const format = req.query.format || 'csv';
-
-  if (format === 'json') {
-    res.setHeader('Content-Disposition', 'attachment; filename="flashchain-evaluation.json"');
-    res.setHeader('Content-Type', 'application/json');
-    return res.json(lastEvaluationResult);
-  }
-
-  // CSV export
-  const lines = [];
-  const s = lastEvaluationResult.summary;
-
-  lines.push(`FlashChain Evaluation Results - ${lastEvaluationResult.timestamp} - ${lastEvaluationResult.trials} trials`);
-  lines.push('');
-
-  // Summary table
-  lines.push('Strategy,Mean Latency (ms),StdDev (ms),95% CI (ms),Mean Hit Rate,Mean Blockchain Calls');
-  lines.push(`No-Cache,${s.noCacheLatency.mean},${s.noCacheLatency.stddev},±${s.noCacheLatency.ci95},0,${s.noCacheBcCalls.mean}`);
-  lines.push(`Naive (5min TTL),${s.naiveLatency.mean},${s.naiveLatency.stddev},±${s.naiveLatency.ci95},${s.naiveHitRate.mean},${s.naiveBcCalls.mean}`);
-  lines.push(`Smart (Policy),${s.smartLatency.mean},${s.smartLatency.stddev},±${s.smartLatency.ci95},${s.smartHitRate.mean},${s.smartBcCalls.mean}`);
-  lines.push('');
-  lines.push(`Speedup Factor (No-Cache / Smart),${s.speedupFactor || 'N/A'}`);
-  lines.push(`Latency Reduction %,${s.latencyReductionPct || 'N/A'}`);
-  lines.push('');
-
-  // Per-trial detail
-  lines.push('Trial,Round,NoCache_AvgMs,Naive_AvgMs,Smart_AvgMs,Naive_HitRate,Smart_HitRate');
-  lastEvaluationResult.perTrial.forEach((trial, ti) => {
-    for (let ri = 0; ri < trial.noCache.length; ri++) {
-      lines.push(`${ti + 1},${ri + 1},${trial.noCache[ri].avgLatencyMs},${trial.naive[ri].avgLatencyMs},${trial.smart[ri].avgLatencyMs},${trial.naive[ri].hitRate},${trial.smart[ri].hitRate}`);
-    }
-  });
-
-  res.setHeader('Content-Disposition', 'attachment; filename="flashchain-evaluation.csv"');
-  res.setHeader('Content-Type', 'text/csv');
-  res.send(lines.join('\n'));
 });
 
 // ========================================

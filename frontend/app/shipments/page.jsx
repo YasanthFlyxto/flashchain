@@ -7,16 +7,31 @@ import { Package, Plus, ArrowRight, RefreshCw, Search, Trash2 } from 'lucide-rea
 
 const CARGO_TYPES = ['Electronics', 'Pharmaceuticals', 'Cold Chain', 'Industrial', 'Documents', 'Textiles'];
 
-const CUSTODIAN_OPTIONS = [
-  { label: 'Manufacturer',           value: 'Manufacturer',                  status: 'Delivered'  },
-  { label: 'Carrier (In-Transit)',   value: 'Carrier-Transit',               status: 'In-Transit' },
-  { label: 'Customs - Rotterdam',    value: 'Customs-Rotterdam-Transit',     status: 'In-Transit' },
-  { label: 'Customs - Antwerp',      value: 'Customs-Antwerp-Transit',       status: 'In-Transit' },
-  { label: 'Customs - Hamburg',      value: 'Customs-Hamburg-Transit',       status: 'In-Transit' },
-  { label: 'Retailer',               value: 'Retailer',                      status: 'Delivered'  },
-  { label: 'Warehouse',              value: 'Warehouse',                     status: 'Delivered'  },
-  { label: 'Under Dispute',          value: 'Disputed',                      status: 'DISPUTED'   },
+// const CUSTODIAN_OPTIONS = [
+//   { label: 'Manufacturer',           value: 'Manufacturer',                  status: 'Delivered'  },
+//   { label: 'Carrier (In-Transit)',   value: 'Carrier-Transit',               status: 'In-Transit' },
+//   { label: 'Customs - Rotterdam',    value: 'Customs-Rotterdam-Transit',     status: 'In-Transit' },
+//   { label: 'Customs - Antwerp',      value: 'Customs-Antwerp-Transit',       status: 'In-Transit' },
+//   { label: 'Customs - Hamburg',      value: 'Customs-Hamburg-Transit',       status: 'In-Transit' },
+//   { label: 'Retailer',               value: 'Retailer',                      status: 'Delivered'  },
+//   { label: 'Warehouse',              value: 'Warehouse',                     status: 'Delivered'  },
+//   { label: 'Under Dispute',          value: 'Disputed',                      status: 'DISPUTED'   },
+// ];
+
+// ADD this
+const CUSTODIAN_OWNERS = ['DHL', 'FedEx', 'Maersk', 'Pfizer', 'Roche', 'Carrier', 'FreightCo', 'SecureTrans'];
+
+const CUSTODIAN_STAGES = [
+  { label: 'In Transit', value: 'Transit', status: 'In-Transit', hint: 'Checkpoint: ~12km · Destination: ~40km' },
+  { label: 'Approaching Checkpoint', value: 'Transit-Approaching-Checkpoint', status: 'In-Transit', hint: 'Checkpoint: 10km · ETA: 30min' },
+  { label: 'Near Destination', value: 'Transit-NearDestination', status: 'In-Transit', hint: 'Checkpoint: none · Destination: 15km' },
+  { label: 'Mid Journey', value: 'Transit-MidJourney', status: 'In-Transit', hint: 'Checkpoint: 250km · Destination: 300km' },
+  { label: 'Delivered', value: 'Delivered', status: 'Delivered', hint: 'Final delivery state' },
+  { label: 'Warehouse', value: 'Warehouse', status: 'Delivered', hint: 'Stationary storage' },
+  { label: 'Under Dispute', value: 'Disputed', status: 'DISPUTED', hint: 'Custody under review' },
 ];
+
+
 
 function formatValue(v) {
   const num = parseFloat(v);
@@ -26,7 +41,7 @@ function formatValue(v) {
 
 function genShipmentId() {
   const d = new Date();
-  const stamp = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+  const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
   const rand = Math.floor(Math.random() * 900) + 100;
   return `SHIP-${stamp}-${rand}`;
 }
@@ -41,11 +56,19 @@ export default function ShipmentsPage() {
   const PAGE_SIZE = 15;
 
   // Create form state
+  // const [createForm, setCreateForm] = useState({
+  //   shipmentId: genShipmentId(),
+  //   cargoType: 'Electronics',
+  //   weight: '',
+  //   custodian: 'Carrier-Transit',
+  //   value: '',
+  // });
   const [createForm, setCreateForm] = useState({
     shipmentId: genShipmentId(),
     cargoType: 'Electronics',
     weight: '',
-    custodian: 'Carrier-Transit',
+    custodianOwner: 'DHL',
+    custodianStage: 'Transit',
     value: '',
   });
   const [creating, setCreating] = useState(false);
@@ -53,14 +76,17 @@ export default function ShipmentsPage() {
 
   // Transfer form state
   const [transferId, setTransferId] = useState('');
-  const [transferCustodian, setTransferCustodian] = useState('Retailer');
+  const [transferCustodian, setTransferCustodian] = useState('Delivered');
   const [transferring, setTransferring] = useState(false);
   const [transferMsg, setTransferMsg] = useState('');
+  const [simulating, setSimulating] = useState(false);
+  const [simMsg, setSimMsg] = useState('');
+
 
   const load = useCallback(async () => {
     try {
       const res = await api.getTestlabAssets();
-      setAssets(api.mapAssets(res.assets || []));
+      setAssets(res.assets || []);
     } catch { /* backend offline */ }
     finally { setLoading(false); }
   }, []);
@@ -88,13 +114,13 @@ export default function ShipmentsPage() {
     try {
       await api.createShipment({
         shipmentId: createForm.shipmentId,
-        color:      createForm.cargoType,
-        size:       String(createForm.weight),
-        owner:      createForm.custodian,
-        value:      String(createForm.value),
+        cargoType: createForm.cargoType,
+        weightKg: String(createForm.weight),
+        custodian: `${createForm.custodianOwner}-${createForm.custodianStage}`,
+        valueUSD: String(createForm.value),
       });
       setCreateMsg('Shipment registered successfully.');
-      setCreateForm({ ...createForm, shipmentId: genShipmentId(), weight: '', value: '' });
+      setCreateForm({ ...createForm, shipmentId: genShipmentId(), weight: '', value: '', custodianOwner: 'DHL', custodianStage: 'Transit' });
       await load();
     } catch {
       setCreateMsg('Failed to register. Check backend connection.');
@@ -121,6 +147,21 @@ export default function ShipmentsPage() {
       await api.deleteAsset(id);
       await load();
     } catch { alert('Delete failed.'); }
+  };
+
+  const handleSimulateAccess = async () => {
+    if (!selectedId) { setSimMsg('Click a shipment row first.'); return; }
+    setSimulating(true);
+    setSimMsg('');
+    try {
+      const stakeholders = ['customs', 'customs', 'insurance', 'insurance', 'receiver'];
+      for (const s of stakeholders) {
+        await fetch(`http://localhost:4000/api/asset/${selectedId}?stakeholder=${s}`);
+      }
+      setSimMsg(`Simulated 5 accesses from 3 orgs on ${selectedId}.`);
+    } catch {
+      setSimMsg('Simulation failed. Check backend connection.');
+    } finally { setSimulating(false); }
   };
 
   return (
@@ -195,7 +236,7 @@ export default function ShipmentsPage() {
                         {a.Origin && a.Destination ? `${a.Origin} → ${a.Destination}` : '-'}
                       </td>
                       <td className="px-3 py-3 text-gray-600 whitespace-nowrap">{a.WeightKg ? `${a.WeightKg} kg` : '-'}</td>
-                      <td className="px-3 py-3 font-medium text-gray-700 whitespace-nowrap">{formatValue(a.AppraisedValue)}</td>
+                      <td className="px-3 py-3 font-medium text-gray-700 whitespace-nowrap">{formatValue(a.ValueUSD)}</td>
                       <td className="px-3 py-3 text-gray-600 text-xs whitespace-nowrap max-w-28 truncate">{a.Custodian || '-'}</td>
                       <td className="px-3 py-3"><StatusBadge status={a.Status} /></td>
                       <td className="px-3 py-3">
@@ -214,9 +255,9 @@ export default function ShipmentsPage() {
               <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between">
                 <span className="text-xs text-gray-500">Page {page} of {totalPages}</span>
                 <div className="flex gap-2">
-                  <button onClick={() => setPage(p => Math.max(1, p-1))} disabled={page === 1}
+                  <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
                     className="px-3 py-1 text-xs border border-gray-200 rounded disabled:opacity-40 hover:bg-gray-50">←</button>
-                  <button onClick={() => setPage(p => Math.min(totalPages, p+1))} disabled={page === totalPages}
+                  <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
                     className="px-3 py-1 text-xs border border-gray-200 rounded disabled:opacity-40 hover:bg-gray-50">→</button>
                 </div>
               </div>
@@ -238,7 +279,7 @@ export default function ShipmentsPage() {
                 <input
                   type="text"
                   value={createForm.shipmentId}
-                  onChange={e => setCreateForm({...createForm, shipmentId: e.target.value})}
+                  onChange={e => setCreateForm({ ...createForm, shipmentId: e.target.value })}
                   className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-300 font-mono"
                 />
               </div>
@@ -246,7 +287,7 @@ export default function ShipmentsPage() {
                 <label className="block text-xs font-medium text-gray-600 mb-1">Cargo Type</label>
                 <select
                   value={createForm.cargoType}
-                  onChange={e => setCreateForm({...createForm, cargoType: e.target.value})}
+                  onChange={e => setCreateForm({ ...createForm, cargoType: e.target.value })}
                   className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-300 bg-white"
                 >
                   {CARGO_TYPES.map(t => <option key={t}>{t}</option>)}
@@ -258,7 +299,7 @@ export default function ShipmentsPage() {
                   <input
                     type="number" min="1" placeholder="e.g. 2400"
                     value={createForm.weight}
-                    onChange={e => setCreateForm({...createForm, weight: e.target.value})}
+                    onChange={e => setCreateForm({ ...createForm, weight: e.target.value })}
                     className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-300"
                   />
                 </div>
@@ -267,25 +308,38 @@ export default function ShipmentsPage() {
                   <input
                     type="number" min="1" placeholder="e.g. 85000"
                     value={createForm.value}
-                    onChange={e => setCreateForm({...createForm, value: e.target.value})}
+                    onChange={e => setCreateForm({ ...createForm, value: e.target.value })}
                     className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-300"
                   />
                 </div>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Initial Custodian / Stage</label>
-                <select
-                  value={createForm.custodian}
-                  onChange={e => setCreateForm({...createForm, custodian: e.target.value})}
-                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-300 bg-white"
-                >
-                  {CUSTODIAN_OPTIONS.map(o => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
+                <div className="flex gap-2">
+                  <select
+                    value={createForm.custodianOwner}
+                    onChange={e => setCreateForm({ ...createForm, custodianOwner: e.target.value })}
+                    className="w-1/2 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-300 bg-white"
+                  >
+                    {CUSTODIAN_OWNERS.map(o => <option key={o}>{o}</option>)}
+                  </select>
+                  <select
+                    value={createForm.custodianStage}
+                    onChange={e => setCreateForm({ ...createForm, custodianStage: e.target.value })}
+                    className="w-1/2 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-300 bg-white"
+                  >
+                    {CUSTODIAN_STAGES.map(s => (
+                      <option key={s.value} value={s.value}>{s.label}</option>
+                    ))}
+                  </select>
+                </div>
                 <p className="text-xs text-gray-400 mt-1">
                   Status: <span className="font-medium text-gray-600">
-                    {CUSTODIAN_OPTIONS.find(o => o.value === createForm.custodian)?.status || '-'}
+                    {CUSTODIAN_STAGES.find(s => s.value === createForm.custodianStage)?.status || '-'}
+                  </span>
+                  {' · '}
+                  <span className="text-gray-400 italic">
+                    {CUSTODIAN_STAGES.find(s => s.value === createForm.custodianStage)?.hint || ''}
                   </span>
                 </p>
               </div>
@@ -327,8 +381,8 @@ export default function ShipmentsPage() {
                   onChange={e => setTransferCustodian(e.target.value)}
                   className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-300 bg-white"
                 >
-                  {CUSTODIAN_OPTIONS.map(o => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
+                  {CUSTODIAN_STAGES.map(s => (
+                    <option key={s.value} value={s.value}>{s.label}</option>
                   ))}
                 </select>
               </div>
@@ -346,6 +400,34 @@ export default function ShipmentsPage() {
               <p className="text-xs text-gray-400 text-center">Cache for this shipment will be invalidated on transfer.</p>
             </form>
           </div>
+          {/* Simulate Multi-Stakeholder Access */}
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
+              <Package size={16} className="text-purple-500" />
+              <h2 className="font-semibold text-gray-900">Simulate Multi-Stakeholder Access</h2>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <p className="text-xs text-gray-500">
+                Simulates 5 reads from 3 organisations (customs ×2, insurance ×2, receiver ×1) on the selected shipment to trigger Rule 2.
+              </p>
+              <div className="px-3 py-2 bg-gray-50 rounded-lg border border-gray-200 font-mono text-xs text-gray-600">
+                {selectedId || 'No shipment selected — click a row'}
+              </div>
+              {simMsg && (
+                <p className={`text-xs px-3 py-2 rounded-lg ${simMsg.includes('Simulated') ? 'bg-purple-50 text-purple-700' : 'bg-red-50 text-red-600'}`}>
+                  {simMsg}
+                </p>
+              )}
+              <button
+                onClick={handleSimulateAccess}
+                disabled={simulating || !selectedId}
+                className="w-full py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700 disabled:opacity-50 transition-colors"
+              >
+                {simulating ? 'Simulating accesses…' : 'Simulate Access Burst'}
+              </button>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
