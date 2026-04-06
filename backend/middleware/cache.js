@@ -202,26 +202,14 @@ class SmartCache {
 /**
  * Policy-based pre-caching engine.
  *
- * Design rationale: Wang et al. (2022) [W22] establish that context-aware caching in
- * distributed ledger systems must be driven by operational state rather than recency
- * alone. This engine evaluates four rules derived from real supply chain event patterns
- * documented in the literature. All thresholds are fully configurable at runtime,
- * enabling supply chain managers to adapt policies to their industry without code changes.
+ * Evaluates four rules against an asset's operational context to decide whether
+ * it should be pre-cached. All thresholds are fully configurable at runtime,
+ * enabling supply chain managers to adapt policies without code changes.
  *
- * The three positive rules (1–3) each target a distinct, research-evidenced event type
- * where blockchain read demand is predictably high and latency is operationally critical.
- * Rule 4 is an explicit negative guard that prevents cache pollution for assets with
- * no imminent high-demand event, consistent with selective-caching efficiency findings
- * in Bozkaya-Aras (2024) [B24] and Wang et al. (2022) [W22].
- *
- * Rule 1: Checkpoint Proximity      - WCO SAFE Framework advance-filing requirement [T23][J25]
- * Rule 2: Multi-Stakeholder Access  - Dispute/audit access pattern documented in [A21][S20]
- * Rule 3: High-Value Near Dest      - Last-mile high-risk zone per TAPA FSR 2020 [A21]
- * Rule 4: Mid-Journey Exclusion     - Selective caching efficiency guard [W22][B24]
- *
- * Industry presets (General Logistics, Pharmaceutical, Food & Beverage) adjust thresholds
- * based on sector-specific compliance frameworks: EU GDP guidelines for pharma [G23],
- * EU Food Regulation 178/2002 and Casino et al. (2021) for food chains [C21].
+ * Rule 1: Checkpoint Proximity      - Pre-cache assets approaching regulatory checkpoints
+ * Rule 2: Multi-Stakeholder Access  - Pre-cache assets under active dispute or audit
+ * Rule 3: High-Value Near Dest      - Pre-cache high-value assets in the last-mile zone
+ * Rule 4: Mid-Journey Exclusion     - Skip assets far from any high-demand event
  */
 class PreCachingRulesEngine {
   constructor(config = {}) {
@@ -299,12 +287,8 @@ class PreCachingRulesEngine {
 
     // ----------------------------------------
     // RULE 4: MID-JOURNEY EXCLUSION
-    // Evaluated first - explicit negative policy
-    //
-    // Wang et al. (2022) [W22] show that pre-caching assets far from any predictable
-    // high-demand event inflates cache size without reducing user-facing latency.
-    // Bozkaya-Aras (2024) [B24] reports selective caching reduces cache pollution by
-    // up to 40% vs naive pre-fetch strategies. This rule prevents that waste.
+    // Evaluated first - explicit negative policy to prevent cache pollution
+    // for assets far from any predictable high-demand event.
     // ----------------------------------------
     if (rule4.enabled) {
       const isFarFromCheckpoint = checkpointDistance > rule4.minCheckpointDistanceKm;
@@ -326,14 +310,8 @@ class PreCachingRulesEngine {
 
     // ----------------------------------------
     // RULE 1: CHECKPOINT PROXIMITY
-    // Uses CheckpointRequiresDocs from asset enrichment layer
-    //
-    // The WCO SAFE Framework (2005, rev. 2021) and EU ICS2 mandate advance electronic
-    // cargo declarations before border/checkpoint arrival. Tang et al. (2023) [T23]
-    // identify pre-fetching before predictable high-demand windows as the primary
-    // blockchain latency reduction strategy. Javed & Mangues-Bafalluy (2025) [J25]
-    // confirm smart contract read latency under concurrent multi-org load can exceed
-    // 2 seconds - pre-caching before the checkpoint query arrives eliminates this delay.
+    // Pre-cache before the checkpoint query arrives to eliminate read latency
+    // during advance declaration windows.
     // ----------------------------------------
     if (rule1.enabled) {
       const checkpointRequiresDocs = asset.CheckpointRequiresDocs === true;
@@ -353,14 +331,8 @@ class PreCachingRulesEngine {
 
     // ----------------------------------------
     // RULE 2: MULTI-STAKEHOLDER ACCESS
-    //
-    // Agrawal et al. (2021) [A21] document that simultaneous cross-organisation access
-    // to the same blockchain traceability record is a reliable indicator of an active
-    // dispute, compliance audit, or regulatory investigation - events that generate
-    // burst blockchain query load. Shalaby et al. (2020) [S20] show that repeated
-    // multi-MSP queries create measurable throughput degradation on Hyperledger Fabric.
-    // Pre-caching for the duration of the investigation window (24h default) absorbs
-    // this burst load and keeps all parties' queries sub-millisecond.
+    // Cross-org burst access indicates an active dispute or audit.
+    // Pre-caching absorbs the burst load for the investigation window.
     // ----------------------------------------
     if (rule2.enabled && recentCount > rule2.accessCountThreshold && uniqueOrgCount >= rule2.minOrganizations) {
       return {
@@ -500,7 +472,7 @@ class PolicyEngine {
 
     let etaMinutes = 9999;
     if (asset.ETA) etaMinutes = Math.max(0, (new Date(asset.ETA).getTime() - now) / 60000);
-
+    
     return {
       status,
       cargoType:              asset.CargoType || '',

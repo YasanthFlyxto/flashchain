@@ -136,6 +136,7 @@ function enrichAssetWithLocation(asset) {
   const ORIGINS = ['Mumbai', 'Singapore', 'Shanghai', 'Dubai', 'Los Angeles', 'Hamburg'];
   const DESTINATIONS = ['Rotterdam', 'Antwerp', 'New York', 'Sydney', 'London', 'Frankfurt'];
   const CONSIGNEES = ['Unilever Europe', 'IKEA Logistics', 'Pfizer Supply', 'Samsung Distribution', 'Amazon EU'];
+
   const _hash = crypto.createHash('md5').update(asset.ID).digest('hex');
   const _seed = parseInt(_hash.substring(0, 4), 16);
   const origin = ORIGINS[_seed % ORIGINS.length];
@@ -314,7 +315,7 @@ async function runBackgroundPrecacheWorker() {
           continue;
         }
 
-        // ✅ CHECK IF ALREADY CACHED BEFORE WRITING
+        // CHECK IF ALREADY CACHED BEFORE WRITING
         const cacheKey = `asset:${assetId}`;
         const existingCache = await smartCache.get(cacheKey);
 
@@ -436,7 +437,6 @@ app.get('/api/asset/:id', async (req, res) => {
 
     // Inform adaptive tuner that this asset was queried
     adaptiveTuner.recordQuery(assetId);
-
     // Keep only last 24 hours
     accessLog[assetId] = accessLog[assetId].filter(
       a => a.timestamp > Date.now() - 86400000
