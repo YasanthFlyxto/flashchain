@@ -25,7 +25,7 @@ class ReadAssetWorkload extends WorkloadModuleBase {
 
     const request = {
       contractId: 'basic',
-      contractFunction: 'ReadAsset',
+      contractFunction: 'GetShipment',
       contractArguments: [assetId],
       readOnly: true  // evaluateTransaction, not submitTransaction
     };

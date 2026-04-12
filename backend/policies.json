@@ -1,5 +1,20 @@
 [
   {
+    "id": "policy_mid_journey_exclusion",
+    "name": "Mid-Journey Exclusion",
+    "enabled": true,
+    "type": "exclusion",
+    "conditions": [
+      { "field": "status",                  "operator": "equals",           "value": "In-Transit" },
+      { "field": "distanceToCheckpointKm",  "operator": "greaterThan",      "value": 200 },
+      { "field": "distanceToDestinationKm", "operator": "greaterThan",      "value": 200 },
+      { "field": "accessCount",             "operator": "lessThanOrEqual",  "value": 3 }
+    ],
+    "logic": "AND",
+    "ttlMinutes": 0,
+    "priority": "LOW"
+  },
+  {
     "id": "policy_checkpoint_proximity",
     "name": "Checkpoint Proximity",
     "enabled": true,

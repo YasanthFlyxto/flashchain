@@ -8,8 +8,6 @@ const fs = require('fs');
 const crypto = require('crypto');
 const smartCache = require('./middleware/cache');
 const { PreCachingRulesEngine, PolicyEngine, DEFAULT_POLICIES } = require('./middleware/cache');
-const AdaptiveTuner = require('./middleware/adaptiveTuner');
-
 // ========================================
 // INDUSTRY PRESETS
 // ========================================
@@ -52,11 +50,8 @@ let workerEnabled = false;
 let workerInterval = null;
 
 
-// Initialize Pre-Caching Rules Engine (used by adaptive tuner / benchmark)
+// Initialize Pre-Caching Rules Engine
 const preCacheRules = new PreCachingRulesEngine();
-
-// Initialize Adaptive Tuner - wired to rules engine + cache
-const adaptiveTuner = new AdaptiveTuner(preCacheRules, smartCache);
 
 // Initialize JSON Policy Engine — load from policies.json, fall back to defaults
 const POLICIES_FILE = path.join(__dirname, 'policies.json');
@@ -331,9 +326,6 @@ async function runBackgroundPrecacheWorker() {
           ttl: evaluation.ttl
         });
 
-        // Inform adaptive tuner that this asset was pre-cached by this rule
-        adaptiveTuner.recordPreCache(assetId, evaluation.triggeredRule, evaluation.ttl);
-
         const activity = {
           assetId,
           policy,
@@ -435,8 +427,6 @@ app.get('/api/asset/:id', async (req, res) => {
       timestamp: Date.now()
     });
 
-    // Inform adaptive tuner that this asset was queried
-    adaptiveTuner.recordQuery(assetId);
     // Keep only last 24 hours
     accessLog[assetId] = accessLog[assetId].filter(
       a => a.timestamp > Date.now() - 86400000
@@ -1057,38 +1047,6 @@ async function startServer() {
 }
 
 // ========================================
-// ADAPTIVE TUNER ENDPOINTS
-// ========================================
-
-// Get full adaptive tuner history - per-round precision/recall, adjustments, threshold drift
-app.get('/api/adaptive/history', (_req, res) => {
-  res.json({
-    success: true,
-    history: adaptiveTuner.getHistory(),
-    currentThresholds: adaptiveTuner.getCurrentThresholds(),
-    frequencyEMA: adaptiveTuner.getFrequencyEMA()
-  });
-});
-
-// Reset adaptive tuner state (for clean simulation runs)
-app.post('/api/adaptive/reset', (_req, res) => {
-  adaptiveTuner.reset();
-  preCacheRules.resetConfig();
-  res.json({ success: true, message: 'Adaptive tuner and rule thresholds reset to defaults' });
-});
-
-// Manually trigger end-of-round evaluation (used by simulation)
-app.post('/api/adaptive/end-round', async (_req, res) => {
-  try {
-    const summary = await adaptiveTuner.endRound();
-    adaptiveTuner.startRound();
-    res.json({ success: true, summary });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ========================================
 // BENCHMARK ENDPOINT
 // ========================================
 
@@ -1258,149 +1216,6 @@ app.post('/api/benchmark/setup-pharma', async (_req, res) => {
   }
 
   res.json({ success: true, results });
-});
-
-// ========================================
-// ADAPTIVE TUNER DEMO - 3 STEP EXPLAINER
-// ========================================
-//
-// Step 1: /api/tuner-demo/reset  - set deliberately tight thresholds, flush cache
-// Step 2: /api/tuner-demo/measure - run worker + queries, return hit rate + thresholds
-// Step 3: /api/tuner-demo/tune   - run endRound(), return what changed and why
-//
-// Frontend calls these in sequence with a button per step.
-// Shows: bad config → 0% hit rate → tuner detects → fixes thresholds → hit rate improves.
-
-const TUNER_DEMO_IDS = ['PHARMA_01', 'PHARMA_02', 'PHARMA_03', 'PHARMA_04', 'PHARMA_05', 'PHARMA_06'];
-const TUNER_DEMO_AGENTS = [
-  { stakeholder: 'regulatory', targets: ['PHARMA_01', 'PHARMA_04', 'PHARMA_05'] },
-  { stakeholder: 'hospital', targets: ['PHARMA_02', 'PHARMA_06', 'PHARMA_04'] },
-  { stakeholder: 'coldchain', targets: ['PHARMA_01', 'PHARMA_02', 'PHARMA_03', 'PHARMA_05', 'PHARMA_06'] },
-];
-const TUNER_DEMO_TIGHT_CONFIG = {
-  rule1: { checkpointDistanceKm: 5, etaMinutes: 60, ttlMinutes: 30, enabled: true },
-  rule2: { accessCountThreshold: 10, minOrganizations: 2, windowHours: 1, ttlHours: 24, enabled: true },
-  rule3: { valueThresholdUsd: 50000, destDistanceKm: 8, ttlMinutes: 45, enabled: true },
-  rule4: { minCheckpointDistanceKm: 200, minDestDistanceKm: 200, maxNormalAccesses: 3, enabled: true }
-};
-
-// Step 1 - reset to tight (bad) thresholds
-app.post('/api/tuner-demo/reset', async (_req, res) => {
-  try {
-    adaptiveTuner.reset();
-    preCacheRules.updateConfig(JSON.parse(JSON.stringify(TUNER_DEMO_TIGHT_CONFIG)));
-    await smartCache.flushAll();
-    for (const id of TUNER_DEMO_IDS) { accessLog[id] = []; }
-
-    res.json({
-      success: true,
-      message: 'Thresholds set to tight (misconfigured) values. Cache cleared.',
-      thresholds: adaptiveTuner.getCurrentThresholds()
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// Step 2 - run worker + queries, measure hit rate
-app.post('/api/tuner-demo/measure', async (_req, res) => {
-  try {
-    // Start a fresh tuner round
-    adaptiveTuner.startRound();
-
-    // Run worker - pre-caches based on current (tight) thresholds
-    await runBackgroundPrecacheWorker();
-
-    // Agents query
-    let hits = 0, misses = 0, totalQueries = 0;
-    const details = [];
-
-    for (const agent of TUNER_DEMO_AGENTS) {
-      for (const id of agent.targets) {
-        const cacheKey = `asset:${id}`;
-        if (!accessLog[id]) accessLog[id] = [];
-        accessLog[id].push({ stakeholder: agent.stakeholder, timestamp: Date.now() });
-        adaptiveTuner.recordQuery(id);
-
-        const cached = await smartCache.get(cacheKey);
-        const source = cached ? 'cache' : 'blockchain';
-        if (source === 'cache') hits++; else misses++;
-        totalQueries++;
-
-        if (!details.find(d => d.id === id)) {
-          details.push({ id, source, preCached: !!cached });
-        }
-      }
-    }
-
-    const hitRate = parseFloat((hits / totalQueries).toFixed(3));
-
-    res.json({
-      success: true,
-      hitRate,
-      hitRatePct: Math.round(hitRate * 100),
-      hits,
-      misses,
-      totalQueries,
-      thresholds: adaptiveTuner.getCurrentThresholds(),
-      assetDetails: details
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// Step 3 - run tuner, return adjustments, then measure again
-app.post('/api/tuner-demo/tune', async (_req, res) => {
-  try {
-    // Run the tuner - adjusts thresholds based on precision/recall
-    const tuningSummary = await adaptiveTuner.endRound();
-
-    // Now measure again with new thresholds
-    await smartCache.flushAll();
-    for (const id of TUNER_DEMO_IDS) { accessLog[id] = []; }
-    adaptiveTuner.startRound();
-    await runBackgroundPrecacheWorker();
-
-    let hits = 0, misses = 0, totalQueries = 0;
-    const details = [];
-
-    for (const agent of TUNER_DEMO_AGENTS) {
-      for (const id of agent.targets) {
-        const cacheKey = `asset:${id}`;
-        if (!accessLog[id]) accessLog[id] = [];
-        accessLog[id].push({ stakeholder: agent.stakeholder, timestamp: Date.now() });
-        adaptiveTuner.recordQuery(id);
-
-        const cached = await smartCache.get(cacheKey);
-        const source = cached ? 'cache' : 'blockchain';
-        if (source === 'cache') hits++; else misses++;
-        totalQueries++;
-
-        if (!details.find(d => d.id === id)) {
-          details.push({ id, source, preCached: !!cached });
-        }
-      }
-    }
-
-    const hitRate = parseFloat((hits / totalQueries).toFixed(3));
-
-    res.json({
-      success: true,
-      adjustments: tuningSummary.thresholdAdjustments,
-      recall: tuningSummary.recall,
-      rulePrecision: tuningSummary.rulePrecision,
-      newThresholds: adaptiveTuner.getCurrentThresholds(),
-      afterHitRate: hitRate,
-      afterHitRatePct: Math.round(hitRate * 100),
-      hits,
-      misses,
-      totalQueries,
-      assetDetails: details
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
 });
 
 startServer();

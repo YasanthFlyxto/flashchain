@@ -149,30 +149,11 @@ export const api = {
     return response.data;
   },
 
-  // ── Adaptive tuner demo ─────────────────────────────────────────────────────
-  async tunerDemoReset() { return (await axios.post(`${API_URL}/api/tuner-demo/reset`)).data; },
-  async tunerDemoMeasure() { return (await axios.post(`${API_URL}/api/tuner-demo/measure`)).data; },
-  async tunerDemoTune() { return (await axios.post(`${API_URL}/api/tuner-demo/tune`)).data; },
-
   // ── Benchmark simulation ────────────────────────────────────────────────────
 
   // Create 6 controlled pharma shipments on the ledger
   async setupPharma() {
     const response = await axios.post(`${API_URL}/api/benchmark/setup-pharma`);
-    return response.data;
-  },
-
-  // ── Adaptive tuner ──────────────────────────────────────────────────────────
-
-  // Get full tuner history - per-round precision/recall, threshold drift
-  async getAdaptiveHistory() {
-    const response = await axios.get(`${API_URL}/api/adaptive/history`);
-    return response.data;
-  },
-
-  // Reset tuner and rules to defaults
-  async resetAdaptiveTuner() {
-    const response = await axios.post(`${API_URL}/api/adaptive/reset`);
     return response.data;
   },
 

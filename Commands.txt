@@ -15,3 +15,147 @@ redis-cli GET "asset:SHIP001"
 
 Redis Raw Benchmark
 redis-benchmark -c 100 -n 10000 -t get
+
+
+─────────────────────────────────────────────────────────────────────────────
+Input:   None (reads from Fabric ledger and in-memory access log)
+Output:  result { preCached, alreadyCached, skipped, errors, durationMs }
+─────────────────────────────────────────────────────────────────────────────
+1:  result ← { preCached:0, alreadyCached:0, skipped:0, errors:0 }
+2:  startTime ← currentTimeMs()
+3:  Aₜ ← GetAllShipments() WHERE Status = "In-Transit"
+4:  Aᴅ ← GetAllShipments() WHERE Status = "DISPUTED"
+5:  C  ← Aₜ ∪ Aᴅ
+6:  FOR EACH asset a ∈ C DO
+7:      TRY
+8:          enriched ← EnrichAssetWithLocation(a)
+9:          evaluation ← EvaluatePolicy(enriched, L(a.ID))
+10:         IF evaluation.shouldPreCache = FALSE THEN
+11:             result.skipped ← result.skipped + 1
+12:             CONTINUE
+13:         END IF
+14:         key ← "asset:" + enriched.ID
+15:         existing ← R.GET(key)
+16:         IF existing ≠ NULL AND existing.preCached = TRUE THEN
+17:             result.alreadyCached ← result.alreadyCached + 1
+18:             CONTINUE
+19:         END IF
+20:         R.SETEX(key, evaluation.ttl, enriched)
+21:         LogActivity(enriched, evaluation)
+22:         result.preCached ← result.preCached + 1
+23:     CATCH error
+24:         result.errors ← result.errors + 1
+25:     END TRY
+26: END FOR
+27: result.durationMs ← currentTimeMs() − startTime
+28: RETURN result
+
+─────────────────────────────────────────────────────────────────────────────
+Repeat every τ = 5 seconds while worker is enabled.
+
+
+
+ALGORITHM 6.2: EvaluatePolicy(asset, accessLog)
+─────────────────────────────────────────────────────────────────────────────
+Input:   asset     — enriched shipment record
+         accessLog — list of { stakeholder, timestamp } entries for asset
+Output:  decision  — { shouldPreCache, ruleName, ttl, reason, priority }
+─────────────────────────────────────────────────────────────────────────────
+
+PHASE 1 — Context Derivation
+─────────────────────────────
+1:  windowMs      ← config.rule2.windowHours × 3,600,000
+2:  recentAccesses ← { e ∈ accessLog | e.timestamp ≥ currentTime − windowMs }
+3:  recentCount   ← |recentAccesses|
+4:  uniqueOrgCount ← |{ e.stakeholder | e ∈ recentAccesses }|
+5:  isInTransit ← (asset.Status contains "transit")
+                  OR (asset.Custodian contains "transit")
+6:  IF asset.ETA ≠ NULL THEN
+7:      etaMinutes ← MAX(0, (asset.ETA − currentTime) / 60,000)
+8:  ELSE
+9:      etaMinutes ← ∞
+10: END IF
+11: ctx ← {
+      status:                  DeriveStatus(asset.Status, asset.Custodian),
+      distanceToCheckpointKm:  asset.CheckpointDistance  ?? ∞,
+      distanceToDestinationKm: asset.DestinationDistance ?? ∞,
+      etaMinutes:              etaMinutes,
+      valueUsd:                integer(asset.ValueUSD),
+      accessCount:             recentCount,
+      orgCount:                uniqueOrgCount
+    }
+
+PHASE 2 — Policy Matching
+──────────────────────────
+12: FOR EACH policy p ∈ P (evaluated in priority order) DO
+13:     IF p.enabled = FALSE THEN CONTINUE END IF
+
+14:     conditionResults ← []
+15:     FOR EACH condition c ∈ p.conditions DO
+16:         conditionResults.APPEND( EvalCondition(c, ctx) )
+17:     END FOR
+18:     IF p.logic = "AND" THEN
+19:         matched ← ALL(conditionResults = TRUE)
+20:     ELSE  // OR
+21:         matched ← ANY(conditionResults = TRUE)
+22:     END IF
+23:     IF matched THEN
+24:         RETURN {
+25:             shouldPreCache: TRUE,
+26:             ruleName:       p.name,
+27:             ttl:            p.ttlMinutes × 60,
+28:             reason:         BuildReason(p, ctx),
+29:             priority:       p.priority
+30:         }
+31:     END IF
+32: END FOR
+33: RETURN { shouldPreCache: FALSE, ttl: 0, priority: "N/A" }
+─────────────────────────────────────────────────────────────────────────────
+SUBROUTINE: EvalCondition(condition c, context ctx)
+─────────────────────────────────────────────────────────────────────────────
+1:  actual ← ctx[c.field]
+2:  IF actual = UNDEFINED THEN RETURN FALSE END IF
+3:  SWITCH c.operator:
+      "equals"             → RETURN actual = c.value
+      "notEquals"          → RETURN actual ≠ c.value
+      "contains"           → RETURN actual ⊇ c.value
+      "lessThan"           → RETURN actual < c.value
+      "lessThanOrEqual"    → RETURN actual ≤ c.value
+      "greaterThan"        → RETURN actual > c.value
+      "greaterThanOrEqual" → RETURN actual ≥ c.value
+      DEFAULT              → RETURN FALSE
+    END SWITCH
+
+
+
+ALGORITHM 6.3: CacheFirstRead(assetId, stakeholder)
+─────────────────────────────────────────────────────────────────────────────
+Input:   assetId     — unique shipment identifier
+         stakeholder — identity of requesting organisation
+Output:  response    — { source, data, latency }
+─────────────────────────────────────────────────────────────────────────────
+1:  startTime ← currentTimeMs()
+2:  key ← "asset:" + assetId
+3:  // Update access log for Rule 2 detection
+4:  L(assetId).APPEND({ stakeholder, timestamp: currentTime })
+5:  L(assetId) ← { e ∈ L(assetId) | e.timestamp ≥ currentTime − 86,400,000 }
+6:  // Cache-first lookup
+7:  cached ← R.GET(key)
+8:  IF cached ≠ NULL THEN
+9:      stats.hits ← stats.hits + 1
+10:     RETURN { source: "cache",
+                data:    cached.data,
+                latency: currentTimeMs() − startTime }
+11: END IF
+12: // Cache miss — query Fabric ledger
+13: stats.misses ← stats.misses + 1
+14: assetData ← Fabric.evaluateTransaction("GetShipment", assetId)
+15: // On-demand cache write (TTL = 5 minutes)
+16: R.SETEX(key, 300, assetData)
+17: RETURN { source:  "fabric",
+             data:    assetData,
+             latency: currentTimeMs() − startTime }
+
+
+
+

@@ -219,30 +219,6 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
-
-      {/* Performance summary bar */}
-      <div className="bg-white border border-gray-200 rounded-xl px-5 py-4 flex flex-wrap items-center gap-6">
-        <div className="flex items-center gap-2 text-sm">
-          <TrendingUp size={16} className="text-cyan-500" />
-          <span className="font-semibold text-gray-700">FlashChain Cache Performance</span>
-        </div>
-        <div className="flex items-center gap-1 text-sm">
-          <span className="text-gray-500">Cache latency:</span>
-          <span className="font-semibold text-cyan-600 ml-1">~2ms</span>
-        </div>
-        <div className="flex items-center gap-1 text-sm">
-          <span className="text-gray-500">Blockchain latency:</span>
-          <span className="font-semibold text-gray-700 ml-1">~50ms</span>
-        </div>
-        <div className="flex items-center gap-1 text-sm">
-          <span className="text-gray-500">Latency reduction:</span>
-          <span className="font-semibold text-green-600 ml-1">96%</span>
-        </div>
-        <div className="ml-auto flex items-center gap-1.5 text-xs text-gray-400">
-          <AlertTriangle size={12} />
-          Policy-based pre-caching · Hyperledger Fabric + Redis
-        </div>
-      </div>
     </div>
   );
 }

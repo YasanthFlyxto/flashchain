@@ -9,7 +9,6 @@ import {
   Database,
   Settings2,
   FlaskConical,
-  BrainCircuit,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -18,7 +17,6 @@ const NAV_ITEMS = [
   { href: '/cache',       label: 'Cache Intelligence', icon: Database },
   { href: '/policy',      label: 'Policy Studio',      icon: Settings2 },
   { href: '/benchmark',   label: 'Benchmark',          icon: FlaskConical },
-  { href: '/tuner-demo',  label: 'Tuner',         icon: BrainCircuit },
 ];
 
 export default function Sidebar() {

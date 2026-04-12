@@ -70,20 +70,6 @@ function RunButton({ onClick, loading, label, loadingLabel }) {
 // TOOLTIP
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ChartTooltip({ active, payload, label }) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-xs">
-      <p className="font-semibold text-gray-700 mb-1">{label}</p>
-      {payload.map((p, i) => (
-        <p key={i} style={{ color: p.color }}>
-          {p.name}: <span className="font-bold">{p.value}</span>
-        </p>
-      ))}
-    </div>
-  );
-}
-
 function ConcTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
   const blockchain = payload.find(p => p.dataKey === 'blockchain')?.value;
@@ -111,6 +97,7 @@ export default function BenchmarkPage() {
   const [setting, setSetting] = useState(false);
   const [setupDone, setSetupDone] = useState(false);
   const [setupLog, setSetupLog] = useState([]);
+  const [setupError, setSetupError] = useState(null);
 
   // Concurrent load benchmark state
   const [concResults, setConcResults] = useState([]);
@@ -185,13 +172,13 @@ export default function BenchmarkPage() {
   // ── Setup pharma shipments ────────────────────────────────────────────────
   const handleSetup = async () => {
     setSetting(true);
-    setError(null);
+    setSetupError(null);
     try {
       const data = await api.setupPharma();
       setSetupLog(data.results || []);
       setSetupDone(true);
     } catch (e) {
-      setError(e.response?.data?.error || e.message);
+      setSetupError(e.response?.data?.error || e.message);
     } finally {
       setSetting(false);
     }
@@ -233,7 +220,7 @@ export default function BenchmarkPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Benchmark Suite</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Pharmaceutical supply chain simulation - evaluating context-aware caching effectiveness and adaptive policy tuning.
+          Pharmaceutical supply chain simulation - evaluating context-aware caching effectiveness.
         </p>
       </div>
 
@@ -258,6 +245,12 @@ export default function BenchmarkPage() {
             </span>
           )}
         </div>
+
+        {setupError && (
+          <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl p-4 text-red-700 text-sm">
+            <AlertTriangle size={16} /> {setupError}
+          </div>
+        )}
 
         {setupLog.length > 0 && (
           <div className="mt-3 rounded-lg bg-gray-50 border border-gray-100 divide-y divide-gray-100">
@@ -304,16 +297,7 @@ export default function BenchmarkPage() {
         )}
 
         {/* Summary stats */}
-        {concResults.length > 0 && !concRunning && (() => {
-          const last = concResults[concResults.length - 1];
-          return (
-            <div className="grid grid-cols-3 gap-3">
-              <StatBox label="Peak Speedup" value={`${last.speedup}×`} sub={`at ${last.concurrency} concurrent queries`} colour="green" />
-              <StatBox label="Fabric Avg (peak)" value={`${last.blockchain}ms`} sub="direct blockchain query" colour="navy" />
-              <StatBox label="Redis Avg (peak)" value={`${last.cache}ms`} sub="cache hit" colour="cyan" />
-            </div>
-          );
-        })()}
+        
 
         {/* Custom concurrency */}
         <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 flex items-center gap-4">
@@ -400,7 +384,7 @@ export default function BenchmarkPage() {
       <div className="bg-white rounded-2xl border border-gray-200 p-6 space-y-5">
         <SectionHeader
           icon={Activity}
-          title="Caliper-Like Sustained Rate Test"
+          title="Caliper-Like Custom Test"
           subtitle="Fires queries at a fixed TPS rate continuously - new queries fire on schedule regardless of whether previous ones finished. Models real-world automated systems under sustained load."
         />
 

@@ -4,7 +4,6 @@ const redis = require('redis');
 
 // ========================================
 // DEFAULT RULE CONFIGURATION
-// (kept for adaptiveTuner / benchmark compatibility)
 // ========================================
 
 const DEFAULT_CONFIG = {
@@ -41,6 +40,21 @@ const DEFAULT_CONFIG = {
 // ========================================
 
 const DEFAULT_POLICIES = [
+  {
+    id: 'policy_mid_journey_exclusion',
+    name: 'Mid-Journey Exclusion',
+    enabled: true,
+    type: 'exclusion',
+    conditions: [
+      { field: 'status',                   operator: 'equals',      value: 'In-Transit' },
+      { field: 'distanceToCheckpointKm',   operator: 'greaterThan', value: 200 },
+      { field: 'distanceToDestinationKm',  operator: 'greaterThan', value: 200 },
+      { field: 'accessCount',              operator: 'lessThanOrEqual', value: 3 },
+    ],
+    logic: 'AND',
+    ttlMinutes: 0,
+    priority: 'LOW',
+  },
   {
     id: 'policy_checkpoint_proximity',
     name: 'Checkpoint Proximity',
@@ -439,6 +453,16 @@ class PolicyEngine {
     for (const policy of this.policies) {
       if (!policy.enabled) continue;
       if (this._matches(policy, ctx)) {
+        if (policy.type === 'exclusion') {
+          return {
+            shouldPreCache: false,
+            triggeredRule: policy.id,
+            ruleName: policy.name,
+            ttl: 0,
+            reason: this._buildReason(policy, ctx),
+            priority: 'N/A',
+          };
+        }
         return {
           shouldPreCache: true,
           triggeredRule: policy.id,
