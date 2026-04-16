@@ -1,17 +1,47 @@
 // app.js - Policy-Based Pre-Caching System
 
 const express = require('express');
+const cors = require('cors');
 const { Gateway, Wallets } = require('fabric-network');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const smartCache = require('./middleware/cache');
-const { PreCachingRulesEngine } = require('./middleware/cache');
+const { PreCachingRulesEngine, PolicyEngine, DEFAULT_POLICIES } = require('./middleware/cache');
+// ========================================
+// INDUSTRY PRESETS
+// ========================================
+
+const INDUSTRY_PRESETS = {
+  'general-logistics': {
+    label: 'General Logistics',
+    description: 'Standard logistics operations - balanced thresholds for most supply chains',
+    rule1: { checkpointDistanceKm: 20, etaMinutes: 60, ttlMinutes: 30 },
+    rule2: { accessCountThreshold: 3, minOrganizations: 2, windowHours: 1, ttlHours: 24 },
+    rule3: { valueThresholdUsd: 50000, destDistanceKm: 50, ttlMinutes: 45 },
+    rule4: { minCheckpointDistanceKm: 200, minDestDistanceKm: 200, maxNormalAccesses: 3 }
+  },
+  'pharmaceutical': {
+    label: 'Pharmaceutical',
+    description: 'Temperature-sensitive, high-compliance cargo - wider proximity windows, stricter access detection',
+    rule1: { checkpointDistanceKm: 30, etaMinutes: 90, ttlMinutes: 60 },
+    rule2: { accessCountThreshold: 2, minOrganizations: 2, windowHours: 1, ttlHours: 48 },
+    rule3: { valueThresholdUsd: 10000, destDistanceKm: 100, ttlMinutes: 60 },
+    rule4: { minCheckpointDistanceKm: 300, minDestDistanceKm: 300, maxNormalAccesses: 2 }
+  },
+  'food-beverage': {
+    label: 'Food & Beverage',
+    description: 'Perishable goods - tight time windows, aggressive caching for freshness compliance',
+    rule1: { checkpointDistanceKm: 10, etaMinutes: 30, ttlMinutes: 15 },
+    rule2: { accessCountThreshold: 5, minOrganizations: 3, windowHours: 1, ttlHours: 12 },
+    rule3: { valueThresholdUsd: 100000, destDistanceKm: 30, ttlMinutes: 30 },
+    rule4: { minCheckpointDistanceKm: 150, minDestDistanceKm: 150, maxNormalAccesses: 4 }
+  }
+};
 
 const app = express();
-app.use(express.json());
-const cors = require('cors');
 app.use(cors());
+app.use(express.json());
 
 let gateway, network, contract, wallet, ccp;
 
@@ -23,6 +53,23 @@ let workerInterval = null;
 // Initialize Pre-Caching Rules Engine
 const preCacheRules = new PreCachingRulesEngine();
 
+// Initialize JSON Policy Engine — load from policies.json, fall back to defaults
+const POLICIES_FILE = path.join(__dirname, 'policies.json');
+
+function loadPoliciesFromFile() {
+  try {
+    return JSON.parse(fs.readFileSync(POLICIES_FILE, 'utf8'));
+  } catch {
+    return DEFAULT_POLICIES;
+  }
+}
+
+function savePolicies(engine) {
+  fs.writeFileSync(POLICIES_FILE, JSON.stringify(engine.getPolicies(), null, 2), 'utf8');
+}
+
+const policyEngine = new PolicyEngine(loadPoliciesFromFile());
+
 // Track access patterns for Rule 2 (multi-stakeholder detection)
 const accessLog = {};
 
@@ -30,11 +77,36 @@ const accessLog = {};
 let preCacheActivity = [];
 
 // ========================================
+// STATISTICS HELPER
+// ========================================
+
+function calcStats(arr) {
+  const n = arr.length;
+  if (n === 0) return null;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const avg = arr.reduce((s, v) => s + v, 0) / n;
+  const variance = arr.reduce((s, v) => s + (v - avg) ** 2, 0) / n;
+  const stddev = Math.sqrt(variance);
+  const ci95 = 1.96 * (stddev / Math.sqrt(n));
+  return {
+    avg: parseFloat(avg.toFixed(2)),
+    stddev: parseFloat(stddev.toFixed(2)),
+    ci95: parseFloat(ci95.toFixed(2)),
+    p50: parseFloat((sorted[Math.floor(n * 0.50)] ?? sorted[n - 1]).toFixed(2)),
+    p95: parseFloat((sorted[Math.floor(n * 0.95)] ?? sorted[n - 1]).toFixed(2)),
+    p99: parseFloat((sorted[Math.floor(n * 0.99)] ?? sorted[n - 1]).toFixed(2)),
+    min: parseFloat(sorted[0].toFixed(2)),
+    max: parseFloat(sorted[n - 1].toFixed(2)),
+    count: n,
+  };
+}
+
+// ========================================
 // ASSET ENRICHMENT FUNCTION
 // ========================================
 
 function enrichAssetWithLocation(asset) {
-  const ownerLower = asset.Owner.toLowerCase();
+  const ownerLower = asset.Custodian.toLowerCase();
 
   // Determine status (only 3 statuses)
   const isDisputed = ownerLower.includes('dispute') || ownerLower.includes('contested');
@@ -44,13 +116,27 @@ function enrichAssetWithLocation(asset) {
   const isTestAsset = asset.ID.startsWith('TEST_') ||
     asset.ID.startsWith('JOURNEY_') ||
     asset.ID.startsWith('BENCH_') ||
-    asset.ID.startsWith('DEMO_');
+    asset.ID.startsWith('DEMO_') ||
+    asset.ID.startsWith('PHARMA_') ||
+    asset.ID.startsWith('SHIP');
+
 
   let checkpointDistance = 9999;
   let destinationDistance = 9999;
   let nextCheckpoint = null;
   let eta = null;
   let checkpointRequiresDocs = false;
+
+  // Deterministic display metadata for all assets (derived from ID hash)
+  const ORIGINS = ['Mumbai', 'Singapore', 'Shanghai', 'Dubai', 'Los Angeles', 'Hamburg'];
+  const DESTINATIONS = ['Rotterdam', 'Antwerp', 'New York', 'Sydney', 'London', 'Frankfurt'];
+  const CONSIGNEES = ['Unilever Europe', 'IKEA Logistics', 'Pfizer Supply', 'Samsung Distribution', 'Amazon EU'];
+
+  const _hash = crypto.createHash('md5').update(asset.ID).digest('hex');
+  const _seed = parseInt(_hash.substring(0, 4), 16);
+  const origin = ORIGINS[_seed % ORIGINS.length];
+  const destination = DESTINATIONS[(_seed * 3 + 1) % DESTINATIONS.length];
+  const consignee = CONSIGNEES[(_seed * 7 + 2) % CONSIGNEES.length];
 
   if (isTestAsset) {
     // Controlled distances for test assets
@@ -110,12 +196,15 @@ function enrichAssetWithLocation(asset) {
   return {
     ...asset,
     Status: status,
+    Origin: origin,
+    Destination: destination,
+    Consignee: consignee,
     CheckpointDistance: checkpointDistance,
     DestinationDistance: destinationDistance,
     NextCheckpoint: nextCheckpoint,
     ETA: eta,
     CheckpointRequiresDocs: checkpointRequiresDocs,
-    CreatedAt: new Date(Date.now() - Math.random() * 86400000).toISOString()
+    CreatedAt: new Date().toISOString()
   };
 }
 
@@ -160,7 +249,7 @@ async function connectToFabric() {
 
 async function getShipmentsByStatus(statusFilter) {
   try {
-    const result = await contract.evaluateTransaction('GetAllAssets');
+    const result = await contract.evaluateTransaction('GetAllShipments');
     const allAssets = JSON.parse(result.toString());
 
     return allAssets.filter(asset => {
@@ -186,7 +275,7 @@ async function runBackgroundPrecacheWorker() {
     activities: [],
     inTransitCount: 0,
     disputedCount: 0,
-    alreadyCached: 0 
+    alreadyCached: 0
   };
 
   try {
@@ -213,28 +302,15 @@ async function runBackgroundPrecacheWorker() {
         const assetId = enriched.ID;
         const assetAccessLog = accessLog[assetId] || [];
 
-        // Evaluate rules
-        let evaluation = preCacheRules.evaluatePreCachingRules(enriched, assetAccessLog);
-
-        // Policy override: DISPUTED shipments always pre-cache
-        if (policy === 'DISPUTED' && !evaluation.shouldPreCache) {
-          evaluation = {
-            shouldPreCache: true,
-            triggeredRule: 'Policy 01',
-            ruleName: 'Disputed Shipment (Always Pre-Cache)',
-            ttl: 24 * 60 * 60,
-            reason: 'Shipment is under dispute - policy requires full pre-cache',
-            policyTag: 'DISPUTED',
-            priority: 'HIGH'
-          };
-        }
+        // Evaluate using JSON policy engine
+        let evaluation = policyEngine.evaluate(enriched, assetAccessLog);
 
         if (!evaluation.shouldPreCache) {
           result.skipped++;
           continue;
         }
 
-        // ✅ CHECK IF ALREADY CACHED BEFORE WRITING
+        // CHECK IF ALREADY CACHED BEFORE WRITING
         const cacheKey = `asset:${assetId}`;
         const existingCache = await smartCache.get(cacheKey);
 
@@ -258,7 +334,7 @@ async function runBackgroundPrecacheWorker() {
           reason: evaluation.reason,
           ttl: evaluation.ttl,
           timestamp: Date.now(),
-          assetValue: enriched.AppraisedValue,
+          assetValue: enriched.ValueUSD,
           status: enriched.Status,
           checkpointDistance: enriched.CheckpointDistance,
           destinationDistance: enriched.DestinationDistance,
@@ -294,7 +370,7 @@ async function runBackgroundPrecacheWorker() {
 
 // Start/stop worker control
 function startPreCachingWorker() {
-  console.log('[Worker] Background worker started (2-minute interval)');
+  console.log('[Worker] Background worker started (5-second interval)');
 
   // Run worker function with enabled check
   const workerTask = async () => {
@@ -342,7 +418,7 @@ app.get('/api/asset/:id', async (req, res) => {
   const cacheKey = `asset:${assetId}`;
 
   try {
-    // Track access for Rule 2
+   
     if (!accessLog[assetId]) {
       accessLog[assetId] = [];
     }
@@ -371,7 +447,7 @@ app.get('/api/asset/:id', async (req, res) => {
     }
 
     // Cache miss - query blockchain
-    const result = await contract.evaluateTransaction('ReadAsset', assetId);
+    const result = await contract.evaluateTransaction('GetShipment', assetId);
     const assetData = JSON.parse(result.toString());
 
     // Cache for future (on-demand caching)
@@ -396,11 +472,11 @@ app.get('/api/asset/:id', async (req, res) => {
 });
 
 // Get all assets
-app.get('/api/assets', async (req, res) => {
+app.get('/api/assets', async (_req, res) => {
   const startTime = Date.now();
 
   try {
-    const result = await contract.evaluateTransaction('GetAllAssets');
+    const result = await contract.evaluateTransaction('GetAllShipments');
     const assets = JSON.parse(result.toString());
 
     const latency = Date.now() - startTime;
@@ -416,29 +492,24 @@ app.get('/api/assets', async (req, res) => {
 });
 
 // Create shipment
-// Create shipment
-// Create shipment
 app.post('/api/shipment/create', async (req, res) => {
   try {
-    const { shipmentId, color, size, owner, value } = req.body;
+    const { shipmentId, cargoType, weightKg, custodian, valueUSD } = req.body;
 
-    // Determine proper Status format
     let status = 'Delivered';
-    if (owner.includes('Disputed')) {
+    if (custodian.includes('Disputed')) {
       status = 'DISPUTED';
-    } else if (owner.includes('Transit')) {
+    } else if (custodian.includes('Transit')) {
       status = 'In-Transit';
-    } else if (owner.includes('Delivered')) {
-      status = 'Delivered';
     }
 
     await contract.submitTransaction(
-      'CreateAsset',
+      'RegisterShipment',
       shipmentId,
-      color,
-      size,
-      owner,
-      value,
+      cargoType,
+      String(weightKg),
+      custodian,
+      String(valueUSD),
       status
     );
 
@@ -460,10 +531,10 @@ app.post('/api/shipment/create', async (req, res) => {
 
 // Transfer shipment
 app.post('/api/shipment/transfer', async (req, res) => {
-  const { shipmentId, newOwner } = req.body;
+  const { shipmentId, newCustodian } = req.body;
 
   try {
-    await contract.submitTransaction('TransferAsset', shipmentId, newOwner);
+    await contract.submitTransaction('TransferCustody', shipmentId, newCustodian);
     await smartCache.invalidate(`asset:${shipmentId}`);
 
     res.json({
@@ -480,7 +551,7 @@ app.delete('/api/asset/:id', async (req, res) => {
   const assetId = req.params.id;
 
   try {
-    await contract.submitTransaction('DeleteAsset', assetId);
+    await contract.submitTransaction('DeleteShipment', assetId);
     await smartCache.invalidate(`asset:${assetId}`);
 
     res.json({
@@ -493,12 +564,12 @@ app.delete('/api/asset/:id', async (req, res) => {
 });
 
 // Health check
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
 // Get statistics
-app.get('/api/stats', async (req, res) => {
+app.get('/api/stats', async (_req, res) => {
   try {
     const stats = smartCache.getStats();
     const totalQueries = stats.hits + stats.misses;
@@ -523,8 +594,8 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
-// Get pre-caching activity log - now reads from Redis
-app.get('/api/precache/activity', async (req, res) => {
+// Get pre-caching activity log - reads live from Redis
+app.get('/api/precache/activity', async (_req, res) => {
   try {
     // Get all cached asset keys from Redis using the new method
     const keys = await smartCache.getAllAssetKeys();
@@ -546,7 +617,7 @@ app.get('/api/precache/activity', async (req, res) => {
           reason: cached.reason || 'Hot asset pre-cached',
           ttl: cached.ttl || 3600,
           timestamp: cached.cachedAt,
-          assetValue: cached.data.AppraisedValue,
+          assetValue: cached.data.ValueUSD,
           status: cached.data.Status,
           checkpointDistance: cached.data.CheckpointDistance || 0,
           destinationDistance: cached.data.DestinationDistance || 0,
@@ -572,10 +643,8 @@ app.get('/api/precache/activity', async (req, res) => {
   }
 });
 
-
-
 // Reset statistics
-app.post('/api/stats/reset', async (req, res) => {
+app.post('/api/stats/reset', async (_req, res) => {
   smartCache.resetStats();
   await smartCache.flushAll();
   preCacheActivity = [];
@@ -596,7 +665,7 @@ app.get('/api/asset/:id/compare', async (req, res) => {
 
     // Measure blockchain query time with high precision
     const blockchainStart = performance.now();
-    const result = await contract.evaluateTransaction('ReadAsset', assetId);
+    const result = await contract.evaluateTransaction('GetShipment', assetId);
     const assetData = JSON.parse(result.toString());
     const pureBlockchainLatency = performance.now() - blockchainStart;
 
@@ -637,18 +706,16 @@ app.get('/api/asset/:id/compare', async (req, res) => {
   }
 });
 
-
-
-// Get testlab assets with enrichment
-app.get('/api/testlab/assets', async (req, res) => {
+// Get testlab assets with enrichment and pre-caching evaluation
+app.get('/api/testlab/assets', async (_req, res) => {
   try {
-    const result = await contract.evaluateTransaction('GetAllAssets');
+    const result = await contract.evaluateTransaction('GetAllShipments');
     const allAssets = JSON.parse(result.toString());
 
     const enrichedAssets = allAssets.map(asset => {
       const enriched = enrichAssetWithLocation(asset);
       const assetAccessLog = accessLog[asset.ID] || [];
-      const evaluation = preCacheRules.evaluatePreCachingRules(enriched, assetAccessLog);
+      const evaluation = policyEngine.evaluate(enriched, assetAccessLog);
 
       return {
         ...enriched,
@@ -686,7 +753,7 @@ app.get('/api/testlab/assets', async (req, res) => {
 });
 
 // System reset
-app.post('/api/system/reset', async (req, res) => {
+app.post('/api/system/reset', async (_req, res) => {
   try {
     await smartCache.flushAll();
     smartCache.resetStats();
@@ -706,9 +773,9 @@ app.post('/api/system/reset', async (req, res) => {
 });
 
 // Clear all test/benchmark assets from blockchain
-app.post('/api/system/clear-test-assets', async (req, res) => {
+app.post('/api/system/clear-test-assets', async (_req, res) => {
   try {
-    const result = await contract.evaluateTransaction('GetAllAssets');
+    const result = await contract.evaluateTransaction('GetAllShipments');
     const allAssets = JSON.parse(result.toString());
 
     let deleted = 0;
@@ -728,7 +795,7 @@ app.post('/api/system/clear-test-assets', async (req, res) => {
         asset.ID.startsWith('asset')
       ) {
         try {
-          await contract.submitTransaction('DeleteAsset', asset.ID);
+          await contract.submitTransaction('DeleteShipment', asset.ID);
           deleted++;
         } catch (err) {
           console.error(`[Cleanup] Failed to delete ${asset.ID}:`, err.message);
@@ -752,16 +819,16 @@ app.post('/api/system/clear-test-assets', async (req, res) => {
 });
 
 // Clear ALL assets (use with caution)
-app.post('/api/system/clear-all-assets', async (req, res) => {
+app.post('/api/system/clear-all-assets', async (_req, res) => {
   try {
-    const result = await contract.evaluateTransaction('GetAllAssets');
+    const result = await contract.evaluateTransaction('GetAllShipments');
     const allAssets = JSON.parse(result.toString());
 
     let deleted = 0;
 
     for (const asset of allAssets) {
       try {
-        await contract.submitTransaction('DeleteAsset', asset.ID);
+        await contract.submitTransaction('DeleteShipment', asset.ID);
         deleted++;
       } catch (err) {
         console.error(`[Cleanup] Failed to delete ${asset.ID}:`, err.message);
@@ -802,7 +869,7 @@ app.post('/api/worker/toggle', (req, res) => {
   });
 });
 
-app.get('/api/worker/status', (req, res) => {
+app.get('/api/worker/status', (_req, res) => {
   res.json({
     success: true,
     workerEnabled,
@@ -810,12 +877,117 @@ app.get('/api/worker/status', (req, res) => {
   });
 });
 
-// Get asset counts
+// ========================================
+// RULES CONFIGURATION ENDPOINTS
+// ========================================
+
+// Get current rule configuration and available presets
+app.get('/api/rules', (_req, res) => {
+  res.json({
+    success: true,
+    config: preCacheRules.getConfig(),
+    presets: INDUSTRY_PRESETS
+  });
+});
+
+// Apply an industry preset or a custom config
+app.post('/api/rules', (req, res) => {
+  const { preset, config } = req.body;
+
+  if (preset) {
+    const presetData = INDUSTRY_PRESETS[preset];
+    if (!presetData) {
+      return res.status(400).json({
+        success: false,
+        error: `Unknown preset '${preset}'. Available: ${Object.keys(INDUSTRY_PRESETS).join(', ')}`
+      });
+    }
+    preCacheRules.updateConfig(presetData);
+    return res.json({
+      success: true,
+      message: `Applied '${presetData.label}' preset`,
+      config: preCacheRules.getConfig()
+    });
+  }
+
+  if (config) {
+    preCacheRules.updateConfig(config);
+    return res.json({
+      success: true,
+      message: 'Rule configuration updated',
+      config: preCacheRules.getConfig()
+    });
+  }
+
+  return res.status(400).json({ success: false, error: 'Provide a preset name or a config object' });
+});
+
+// Reset rules to system defaults
+app.post('/api/rules/reset', (_req, res) => {
+  preCacheRules.resetConfig();
+  res.json({
+    success: true,
+    message: 'Rules reset to General Logistics defaults',
+    config: preCacheRules.getConfig()
+  });
+});
+
+// ========================================
+// POLICY ENGINE CRUD ENDPOINTS
+// ========================================
+
+// List all policies + available fields
+app.get('/api/policies', (_req, res) => {
+  res.json({
+    success: true,
+    policies: policyEngine.getPolicies(),
+    fields: Object.entries(PolicyEngine.FIELD_TYPES).map(([field, type]) => ({ field, type })),
+    operators: {
+      string: ['equals', 'notEquals', 'contains'],
+      number: ['lessThan', 'lessThanOrEqual', 'greaterThan', 'greaterThanOrEqual', 'equals'],
+    },
+  });
+});
+
+// Add a new policy
+app.post('/api/policies', (req, res) => {
+  const { name, conditions, logic, ttlMinutes, priority } = req.body;
+  if (!name || !conditions || !Array.isArray(conditions) || conditions.length === 0) {
+    return res.status(400).json({ success: false, error: 'name and conditions[] are required' });
+  }
+  const id = 'policy_' + Date.now();
+  policyEngine.addPolicy({ id, name, enabled: true, conditions, logic: logic || 'AND', ttlMinutes: ttlMinutes || 30, priority: priority || 'MEDIUM' });
+  savePolicies(policyEngine);
+  res.json({ success: true, policies: policyEngine.getPolicies() });
+});
+
+// Update a policy (patch fields)
+app.patch('/api/policies/:id', (req, res) => {
+  const ok = policyEngine.updatePolicy(req.params.id, req.body);
+  if (!ok) return res.status(404).json({ success: false, error: 'Policy not found' });
+  savePolicies(policyEngine);
+  res.json({ success: true, policies: policyEngine.getPolicies() });
+});
+
+// Delete a policy
+app.delete('/api/policies/:id', (req, res) => {
+  const ok = policyEngine.removePolicy(req.params.id);
+  if (!ok) return res.status(404).json({ success: false, error: 'Policy not found' });
+  savePolicies(policyEngine);
+  res.json({ success: true, policies: policyEngine.getPolicies() });
+});
+
+// Reset to defaults
+app.post('/api/policies/reset', (_req, res) => {
+  policyEngine.resetToDefaults();
+  savePolicies(policyEngine);
+  res.json({ success: true, policies: policyEngine.getPolicies() });
+});
+
 // Get asset counts (hot vs cold)
-// Get asset counts (hot vs cold)
-app.get('/api/assets/count', async (req, res) => {
+app.get('/api/assets/count', async (_req, res) => {
   try {
-    const result = await contract.evaluateTransaction('GetAllAssets');
+    const result = await contract.evaluateTransaction('GetAllShipments');
     const assets = JSON.parse(result.toString());
 
     let total = assets.length;
@@ -851,8 +1023,6 @@ app.get('/api/assets/count', async (req, res) => {
 
 
 
-
-
 // ========================================
 // START SERVER
 // ========================================
@@ -876,4 +1046,188 @@ async function startServer() {
   }
 }
 
+// ========================================
+// BENCHMARK ENDPOINT
+// ========================================
+
+// Fires N concurrent queries to both blockchain and Redis cache, returns real latency stats.
+// Used by the Benchmark page to show how response time degrades under concurrent load.
+app.post('/api/benchmark/run', async (req, res) => {
+  const { concurrency = 10 } = req.body;
+  try {
+    // Pick first available asset
+    const allResult = await contract.evaluateTransaction('GetAllShipments');
+    const assets = JSON.parse(allResult.toString());
+    if (assets.length === 0) {
+      return res.status(400).json({ success: false, error: 'No assets on ledger. Register shipments first.' });
+    }
+    const assetId = assets[0].ID;
+    const cacheKey = `asset:${assetId}`;
+
+    // Warm the cache so cache hits are guaranteed
+    const rawData = JSON.parse((await contract.evaluateTransaction('GetShipment', assetId)).toString());
+    await smartCache.cacheWithContext(cacheKey, rawData, {
+      preCached: true, ttl: 3600, triggeredRule: 0,
+      ruleName: 'Benchmark', reason: 'Benchmark warm-up', priority: 'HIGH'
+    });
+
+    // Fire N truly concurrent blockchain reads so the graph shows real peer contention
+    // growing with load. gRPC multiplexes over a small connection pool so this is safe.
+    const blockchainLatencies = await Promise.all(
+      Array.from({ length: concurrency }, async () => {
+        const t = performance.now();
+        await contract.evaluateTransaction('GetShipment', assetId);
+        return parseFloat((performance.now() - t).toFixed(2));
+      })
+    );
+
+    // Fire N concurrent cache reads (Redis is fast enough for full concurrency)
+    const cacheLatencies = await Promise.all(
+      Array.from({ length: concurrency }, async () => {
+        const t = performance.now();
+        await smartCache.get(cacheKey);
+        return parseFloat((performance.now() - t).toFixed(2));
+      })
+    );
+
+    res.json({
+      success: true,
+      concurrency,
+      assetId,
+      blockchain: calcStats(blockchainLatencies),
+      cache: calcStats(cacheLatencies),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// CALIPER-LIKE SUSTAINED RATE BENCHMARK
+// ========================================
+//
+// Unlike /api/benchmark/run which fires a single burst of N queries,
+// this endpoint sustains a fixed query rate (TPS) for a set duration.
+// New queries fire on schedule regardless of whether previous ones finished -
+// exactly how Caliper and real-world automated systems behave.
+// This creates genuine backpressure on Fabric when throughput < send rate.
+
+app.post('/api/benchmark/sustained', async (req, res) => {
+  const { tps = 50, durationSeconds = 10 } = req.body;
+
+  try {
+    const allResult = await contract.evaluateTransaction('GetAllShipments');
+    const assets = JSON.parse(allResult.toString());
+    if (assets.length === 0) {
+      return res.status(400).json({ success: false, error: 'No assets on ledger.' });
+    }
+    const assetId = assets[0].ID;
+    const cacheKey = `asset:${assetId}`;
+
+    // Warm cache
+    const rawData = JSON.parse((await contract.evaluateTransaction('GetShipment', assetId)).toString());
+    await smartCache.cacheWithContext(cacheKey, rawData, {
+      preCached: true, ttl: 3600, triggeredRule: 0,
+      ruleName: 'Benchmark', reason: 'Sustained benchmark warm-up', priority: 'HIGH'
+    });
+
+    const intervalMs = 1000 / tps;
+    const totalQueries = tps * durationSeconds;
+    const target = req.body.target || 'both'; // 'fabric', 'cache', or 'both'
+
+    // Helper: run one target at sustained rate using setInterval.
+    // setInterval fires one query per tick - no upfront timer registration,
+    // so the event loop is never overwhelmed regardless of duration.
+    const runTarget = (fn) => new Promise(resolve => {
+      const results = [];
+      let fired = 0;
+      const interval = setInterval(async () => {
+        if (fired >= totalQueries) { clearInterval(interval); return; }
+        fired++;
+        const t = performance.now();
+        try { await fn(); } catch (_) { }
+        results.push(parseFloat((performance.now() - t).toFixed(2)));
+        if (results.length === totalQueries) resolve(results);
+      }, intervalMs);
+    });
+
+    // Run Fabric and Redis separately so they don't compete for the event loop
+    const blockchainLatencies = (target === 'fabric' || target === 'both')
+      ? await runTarget(() => contract.evaluateTransaction('GetShipment', assetId))
+      : null;
+
+    const cacheLatencies = (target === 'cache' || target === 'both')
+      ? await runTarget(() => smartCache.get(cacheKey))
+      : null;
+
+    res.json({
+      success: true,
+      tps,
+      durationSeconds,
+      totalQueries,
+      target,
+      assetId,
+      blockchain: blockchainLatencies ? calcStats(blockchainLatencies) : null,
+      cache: cacheLatencies ? calcStats(cacheLatencies) : null
+    });
+
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// PHARMA SIMULATION SETUP
+// ========================================
+
+// Creates 6 controlled pharmaceutical shipments on the ledger.
+// Owner keywords drive deterministic enrichment in enrichAssetWithLocation():
+//   - "Transit-Approaching-Checkpoint" → checkpointDistance=10, Rule 1 fires
+//   - "Transit-NearDestination"        → destinationDistance=15, Rule 3 fires
+//   - "Transit-MidJourney"             → distance=250-300, Rule 4 excludes
+//   - "Disputed"                       → dispute override fires
+app.post('/api/benchmark/setup-pharma', async (_req, res) => {
+  const pharmaShipments = [
+    { id: 'PHARMA_01', cargoType: 'Vaccines',     weightKg: '500',  custodian: 'Pfizer-Transit-Approaching-Checkpoint',  valueUSD: '85000' },
+    { id: 'PHARMA_02', cargoType: 'Antibiotics',  weightKg: '200',  custodian: 'Roche-Transit-NearDestination',          valueUSD: '72000' },
+    { id: 'PHARMA_03', cargoType: 'Insulin',      weightKg: '150',  custodian: 'AstraZeneca-Transit-MidJourney',         valueUSD: '45000' },
+    { id: 'PHARMA_04', cargoType: 'Vaccines',     weightKg: '800',  custodian: 'Novartis-Disputed-Transit',              valueUSD: '95000' },
+    { id: 'PHARMA_05', cargoType: 'Syringes',     weightKg: '1000', custodian: 'GSK-Transit-Approaching-Checkpoint',     valueUSD: '62000' },
+    { id: 'PHARMA_06', cargoType: 'Diagnostics',  weightKg: '300',  custodian: 'Moderna-Transit-NearDestination',        valueUSD: '78000' },
+  ];
+
+  const results = [];
+  for (const s of pharmaShipments) {
+    try {
+      // Check if exists first
+      try {
+        await contract.evaluateTransaction('GetShipment', s.id);
+        results.push({ id: s.id, status: 'already_exists' });
+        continue;
+      } catch (_) {
+        // Doesn't exist - create it
+      }
+      const st = s.custodian.includes('Disputed') ? 'DISPUTED' : s.custodian.includes('Transit') ? 'In-Transit' : 'Delivered';
+      await contract.submitTransaction('RegisterShipment', s.id, s.cargoType, s.weightKg, s.custodian, s.valueUSD, st);
+      results.push({ id: s.id, status: 'created' });
+    } catch (err) {
+      results.push({ id: s.id, status: 'error', error: err.message });
+    }
+  }
+
+  res.json({ success: true, results });
+});
+
 startServer();
+
+process.on('SIGINT', () => {
+  console.log('[Server] Shutting down gracefully...');
+  stopPreCachingWorker();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  console.log('[Server] Shutting down gracefully...');
+  stopPreCachingWorker();
+  process.exit(0);
+});

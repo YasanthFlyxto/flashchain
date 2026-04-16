@@ -1,0 +1,17 @@
+Startup 
+./startup-flashchain.sh
+
+Stop
+./stop-flashchain.sh
+
+Query Peer 1 All Assets (Change setGlobals 1 to setGlobals 2 for org2's peer)
+cd /home/yasanth-ubuntu-22/fabric-samples/test-network && export PATH=$PATH:/home/yasanth-ubuntu-22/fabric-samples/bin && export FABRIC_CFG_PATH=/home/yasanth-ubuntu-22/fabric-samples/config && source scripts/envVar.sh && setGlobals 1 && peer chaincode query -C mychannel -n basic -c '{"Args":["GetAllAssets"]}'
+
+Query redis
+redis-cli KEYS "*"
+
+See a specific value
+redis-cli GET "asset:SHIP001"
+
+Redis Raw Benchmark
+redis-benchmark -c 100 -n 10000 -t get
