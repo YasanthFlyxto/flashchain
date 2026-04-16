@@ -251,7 +251,7 @@ export default function PolicyStudioPage() {
       const res = await api.getPolicies();
       setPolicies(res.policies || []);
       setFields(res.fields || []);
-    } catch { /* backend offline */ }
+    } catch {}
     finally { setLoading(false); }
   }, []);
 

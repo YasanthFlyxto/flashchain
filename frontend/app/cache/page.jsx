@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../lib/api';
-import { Clock, RefreshCw, Play, Pause } from 'lucide-react';
+import { RefreshCw, Play, Pause } from 'lucide-react';
 
 function timeAgo(isoString) {
   if (!isoString) return '-';
@@ -38,7 +38,7 @@ export default function CacheIntelligencePage() {
       setActivity(activityRes.activity || []);
       setAssets(assetsRes.assets || []);
       setWorkerEnabled(workerRes.workerEnabled || false);
-    } catch { /* backend offline */ }
+    } catch {}
     finally { setLoading(false); }
   }, []);
 
@@ -52,7 +52,7 @@ export default function CacheIntelligencePage() {
     try {
       const res = await api.toggleWorker(!workerEnabled);
       setWorkerEnabled(res.workerEnabled);
-    } catch { /* ignore */ }
+    } catch {}
   };
 
   const runWorker = async () => {
@@ -60,7 +60,7 @@ export default function CacheIntelligencePage() {
     try {
       await api.runWorkerOnce();
       await load();
-    } catch { /* ignore */ }
+    } catch {}
     finally { setRunning(false); }
   };
 
