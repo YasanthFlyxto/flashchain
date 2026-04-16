@@ -362,10 +362,7 @@ class PreCachingRulesEngine {
 
     // ----------------------------------------
     // RULE 3: HIGH-VALUE NEAR DESTINATION
-    //
-    // TAPA Freight Security Requirements (FSR 2020) classify the last-mile delivery
     // zone as the highest-risk segment for cargo theft and documentation disputes.
-    // Agrawal et al. (2021) [A21] observe that high-value shipment delivery triggers
     // simultaneous queries from customs valuation, insurance, and receiving parties.
     // Pre-caching when the shipment enters the last-mile zone ensures all parties
     // receive instant responses during the delivery inspection window.

@@ -418,7 +418,7 @@ app.get('/api/asset/:id', async (req, res) => {
   const cacheKey = `asset:${assetId}`;
 
   try {
-    // Track access for Rule 2
+   
     if (!accessLog[assetId]) {
       accessLog[assetId] = [];
     }

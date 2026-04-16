@@ -5,10 +5,26 @@
     "enabled": true,
     "type": "exclusion",
     "conditions": [
-      { "field": "status",                  "operator": "equals",           "value": "In-Transit" },
-      { "field": "distanceToCheckpointKm",  "operator": "greaterThan",      "value": 200 },
-      { "field": "distanceToDestinationKm", "operator": "greaterThan",      "value": 200 },
-      { "field": "accessCount",             "operator": "lessThanOrEqual",  "value": 3 }
+      {
+        "field": "status",
+        "operator": "equals",
+        "value": "In-Transit"
+      },
+      {
+        "field": "distanceToCheckpointKm",
+        "operator": "greaterThan",
+        "value": 200
+      },
+      {
+        "field": "distanceToDestinationKm",
+        "operator": "greaterThan",
+        "value": 200
+      },
+      {
+        "field": "accessCount",
+        "operator": "lessThanOrEqual",
+        "value": 3
+      }
     ],
     "logic": "AND",
     "ttlMinutes": 0,
