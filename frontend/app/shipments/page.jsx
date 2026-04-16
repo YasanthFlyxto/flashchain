@@ -7,18 +7,6 @@ import { Package, Plus, ArrowRight, RefreshCw, Search, Trash2 } from 'lucide-rea
 
 const CARGO_TYPES = ['Electronics', 'Pharmaceuticals', 'Cold Chain', 'Industrial', 'Documents', 'Textiles'];
 
-// const CUSTODIAN_OPTIONS = [
-//   { label: 'Manufacturer',           value: 'Manufacturer',                  status: 'Delivered'  },
-//   { label: 'Carrier (In-Transit)',   value: 'Carrier-Transit',               status: 'In-Transit' },
-//   { label: 'Customs - Rotterdam',    value: 'Customs-Rotterdam-Transit',     status: 'In-Transit' },
-//   { label: 'Customs - Antwerp',      value: 'Customs-Antwerp-Transit',       status: 'In-Transit' },
-//   { label: 'Customs - Hamburg',      value: 'Customs-Hamburg-Transit',       status: 'In-Transit' },
-//   { label: 'Retailer',               value: 'Retailer',                      status: 'Delivered'  },
-//   { label: 'Warehouse',              value: 'Warehouse',                     status: 'Delivered'  },
-//   { label: 'Under Dispute',          value: 'Disputed',                      status: 'DISPUTED'   },
-// ];
-
-// ADD this
 const CUSTODIAN_OWNERS = ['DHL', 'FedEx', 'Maersk', 'Pfizer', 'Roche', 'Carrier', 'FreightCo', 'SecureTrans'];
 
 const CUSTODIAN_STAGES = [
@@ -55,14 +43,6 @@ export default function ShipmentsPage() {
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 15;
 
-  // Create form state
-  // const [createForm, setCreateForm] = useState({
-  //   shipmentId: genShipmentId(),
-  //   cargoType: 'Electronics',
-  //   weight: '',
-  //   custodian: 'Carrier-Transit',
-  //   value: '',
-  // });
   const [createForm, setCreateForm] = useState({
     shipmentId: genShipmentId(),
     cargoType: 'Electronics',
@@ -87,7 +67,7 @@ export default function ShipmentsPage() {
     try {
       const res = await api.getTestlabAssets();
       setAssets(res.assets || []);
-    } catch { /* backend offline */ }
+    } catch {}
     finally { setLoading(false); }
   }, []);
 

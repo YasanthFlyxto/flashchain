@@ -6,7 +6,7 @@ import KPICard from './components/KPICard';
 import StatusBadge from './components/StatusBadge';
 import {
   Package, Activity, Database,
-  RefreshCw, Clock, AlertTriangle, TrendingUp
+  RefreshCw, Clock
 } from 'lucide-react';
 
 function formatValue(v) {
@@ -59,7 +59,7 @@ export default function Dashboard() {
     try {
       const res = await api.toggleWorker(!workerEnabled);
       setWorkerEnabled(res.workerEnabled);
-    } catch { /* ignore */ }
+    } catch {}
   };
 
   const activeShipments = assets.filter(a => a.Status === 'In-Transit' || a.Status === 'DISPUTED');
